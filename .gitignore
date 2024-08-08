@@ -1,52 +1,22 @@
-# Prerequisites
-*.d
+# This file is for zig-specific build artifacts.
+# If you have OS-specific or editor-specific files to ignore,
+# such as *.swp or .DS_Store, put those in your global
+# ~/.gitignore and put this in your ~/.gitconfig:
+#
+# [core]
+#     excludesfile = ~/.gitignore
+#
+# Cheers!
+# -andrewrk
 
-# Object files
-*.o
-*.ko
-*.obj
-*.elf
+.zig-cache/
+zig-out/
+/release/
+/debug/
+/build/
+/build-*/
+/docgen_tmp/
 
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
-
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
-
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
+# Although this was renamed to .zig-cache, let's leave it here for a few
+# releases to make it less annoying to work with multiple branches.
+zig-cache/
