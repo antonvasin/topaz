@@ -1,33 +1,60 @@
-//! By convention, main.zig is where your main function lives in the case that
-//! you are building an executable. If you are making a library, the convention
-//! is to delete this file and start with root.zig instead.
 const std = @import("std");
+const builtin = @import("builtin");
+
+const c = @cImport({
+    @cInclude("md4c.h");
+});
 
 pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+    var alloc = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = alloc.deinit();
+    const allocator = alloc.allocator();
 
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
+    // const args = try std.process.argsAlloc(alloc);
+    // defer std.process.argsFree(alloc, args);
+    //
+    // for (args) |arg| {
+    //     std.debug.print("Arg: {s}.\n", .{arg});
+    // }
+
     const stdout_file = std.io.getStdOut().writer();
     var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
+    // const stdout = bw.writer();
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
+    var dir = try std.fs.cwd().openDir(".", .{ .iterate = true });
+    defer dir.close();
+    var walker = try dir.walk(allocator);
+    defer walker.deinit();
+
+
+    while (try walker.next()) |entry| {
+        if (entry.kind == .file) {
+            const ext = std.fs.path.extension(entry.basename);
+            if (std.mem.eql(u8, ext, ".md")) {
+                std.debug.print("Processing {s}...\n", .{entry.path});
+                const file = try dir.openFile(entry.path, .{});
+                const bufReader = std.io.bufferedReader(file.reader());
+                var line = std.ArrayList(u8).init(allocator);
+                defer line.deinit();
+
+
+                defer file.close();
+            }
+        }
+    }
 
     try bw.flush(); // Don't forget to flush!
 }
 
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
-}
+// test "simple test" {
+//     var list = std.ArrayList(i32).init(std.testing.allocator);
+//     defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
+//     try list.append(42);
+//     try std.testing.expectEqual(@as(i32, 42), list.pop());
+// }
 
-test "fuzz example" {
-    // Try passing `--fuzz` to `zig build` and see if it manages to fail this test case!
-    const input_bytes = std.testing.fuzzInput(.{});
-    try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input_bytes));
-}
+// test "fuzz example" {
+//     // Try passing `--fuzz` to `zig build` and see if it manages to fail this test case!
+//     const input_bytes = std.testing.fuzzInput(.{});
+//     try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input_bytes));
+// }
