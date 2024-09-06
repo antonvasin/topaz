@@ -22,7 +22,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    exe.linkSystemLibrary("md4c");
+    exe.linkLibC();
+
+    // const md4c = b.dependency("md4c", .{
+    //     .target = target,
+    //     .optimize = optimize,
+    // });
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const c = @cImport({
+const md = @cImport({
     @cInclude("md4c.h");
 });
 
@@ -26,21 +26,43 @@ pub fn main() !void {
     var walker = try dir.walk(allocator);
     defer walker.deinit();
 
-
     while (try walker.next()) |entry| {
-        if (entry.kind == .file) {
-            const ext = std.fs.path.extension(entry.basename);
-            if (std.mem.eql(u8, ext, ".md")) {
-                std.debug.print("Processing {s}...\n", .{entry.path});
-                const file = try dir.openFile(entry.path, .{});
-                const bufReader = std.io.bufferedReader(file.reader());
-                var line = std.ArrayList(u8).init(allocator);
-                defer line.deinit();
+        if (entry.kind != .file) continue;
 
+        const ext = std.fs.path.extension(entry.basename);
+        if (!std.mem.eql(u8, ext, ".md")) continue;
 
-                defer file.close();
-            }
+        std.debug.print("{s}\n", .{entry.path});
+        const file = try dir.openFile(entry.path, .{});
+        defer file.close();
+
+        var bufReader = std.io.bufferedReader(file.reader());
+        var reader = bufReader.reader();
+
+        var line = std.ArrayList(u8).init(allocator);
+        defer line.deinit();
+
+        const writer = line.writer();
+        var line_no: usize = 0;
+        while (reader.streamUntilDelimiter(writer, '\n', null)) {
+            // Clear the line so we can reuse it.
+            defer line.clearRetainingCapacity();
+            line_no += 1;
+
+            std.debug.print("{d}--{s}\n", .{ line_no, line.items });
+        } else |err| switch (err) {
+            error.EndOfStream => { // end of file
+                if (line.items.len > 0) {
+                    line_no += 1;
+                    std.debug.print("{d}--{s}\n", .{ line_no, line.items });
+                }
+            },
+            else => return err, // Propagate error
         }
+
+        std.debug.print("Total lines: {d}\n", .{line_no});
+
+        // defer file.close();
     }
 
     try bw.flush(); // Don't forget to flush!
