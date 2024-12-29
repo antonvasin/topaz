@@ -22,12 +22,15 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    exe.linkLibC();
+    const md4c = b.dependency("md4c", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addIncludePath(md4c.path("src"));
+    exe.addIncludePath(md4c.path("src"));
+    exe.addCSourceFile(.{ .file = md4c.path("src/md4c.c") });
 
-    // const md4c = b.dependency("md4c", .{
-    //     .target = target,
-    //     .optimize = optimize,
-    // });
+    exe.linkLibC();
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
