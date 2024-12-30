@@ -1,36 +1,21 @@
 # TODO
 
-## TODO
-
+- [ ] (A) +html Implement HTML renderer
+- [ ] (A) +frontmatter read frontmatter, remove for further markdown parsing
 - [ ] Pass src directory via args
-- [ ] Get list of files to process, filter out empty and drafts/private notes
-
-- For each file:
-   - [ ] Split Frontmatter and Markdown
-   - [ ] Parse markdown with https://github.com/mity/md4c
-   - [ ] Process wiki-links
-   - [ ] Add anchors to headers, generate slugs
-   - [ ] Generate Table of contents
-   - [ ] Collect backlinks for each file
-- [ ] Collect table of contents data /w metadata for all files
-
-- [ ] Test with https://github.com/progit/progit/tree/master/en
-- [ ] Test with Obsidian vault
-
-- [ ] Get output directory from arguments, use `out` otherwise
-- [ ] Write output to HTML files
-- [ ] Collect JS files
-   - [ ] Parse frontmatter, dedupe, get map of source files to bundle
-   - [ ] Use esbuild to bundle+minimize JS
-- [ ] Collect CSS and bundle CSS
-- [ ] Copy images/files to `/public`
-
-- [ ] SPA navigation
-- [ ] Layout/component support
-
-- [ ] Fetch content from git repo
-- [ ] Generate changelog from git
-
-## In Progress
-
-## Done
+- [ ] +frontmatter Filter out empty and drafts/private notes
+- [x] Integrate [`md4c`](https://github.com/mity/md4c)
+- [ ] +links Generate slugs for filenames and headers
+- [ ] +links Process Wiki-style links
+- [ ] +links Generate Table of Contents
+- [ ] +links Collect backlinks
+- [ ] +html Implement templating
+- [ ] +frontmatter collect js, css assets and meta headers
+- [ ] +js Bundle JS & CSS (get dep graph, dedupe, bundle with esbuild)
+- [ ] +html Copy linked images/files to `/public`
+- [ ] +tests Add tests for [Git book](https://github.com/progit/progit/tree/master/en)
+- [ ] +tests Add tests for Obsidian vault
+- [ ] +js SPA navigation
+- [ ] +js Components/frameworks support
+- [ ] +sync Fetch content from git repo
+- [ ] +sync Generate changelog from git
