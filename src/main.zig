@@ -1,55 +1,97 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const print = std.debug.print;
 const c = @cImport({
     @cInclude("md4c.h");
 });
 
 fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) callconv(.C) c_int {
-    _ = detail; // autofix
-    _ = userdetail;
-    std.debug.print("Entering block {any}\n", .{blk});
+    _ = userdetail; // autofix
+    const tag = switch (blk) {
+        c.MD_BLOCK_DOC => "<body>",
+        c.MD_BLOCK_QUOTE => "<blockquote>",
+        c.MD_BLOCK_UL => "<ul>",
+        c.MD_BLOCK_OL => "<ol>",
+        c.MD_BLOCK_LI => "<li>",
+        c.MD_BLOCK_HR => "<hr>",
+        c.MD_BLOCK_H => blk: {
+            var buf: [16]u8 = undefined;
+            const level = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail))).level;
+            const str = std.fmt.bufPrint(&buf, "<h{d}>", .{@as(u8, @intCast(level))}) catch unreachable;
+            break :blk str;
+        },
+        c.MD_BLOCK_CODE => "<pre><code>",
+        c.MD_BLOCK_HTML => "<html>",
+        c.MD_BLOCK_P => "<p>",
+        c.MD_BLOCK_TABLE => "<table>",
+        c.MD_BLOCK_THEAD => "<thead>",
+        c.MD_BLOCK_TBODY => "<tbody>",
+        c.MD_BLOCK_TR => "<tr>",
+        c.MD_BLOCK_TH => "<th>",
+        c.MD_BLOCK_TD => "<td>",
+        else => "----",
+    };
+    print("{s}\n", .{tag});
     return 0;
 }
 
 fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) callconv(.C) c_int {
     _ = userdetail; // autofix
-    _ = detail; // autofix
-    std.debug.print("Leaving block {any}\n", .{blk});
+    const tag = switch (blk) {
+        c.MD_BLOCK_DOC => "</body>",
+        c.MD_BLOCK_QUOTE => "</blockquote>",
+        c.MD_BLOCK_UL => "</ul>",
+        c.MD_BLOCK_OL => "</ol>",
+        c.MD_BLOCK_LI => "</li>",
+        c.MD_BLOCK_HR => "</hr>",
+        c.MD_BLOCK_H => blk: {
+            var buf: [16]u8 = undefined;
+            const level = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail))).level;
+            const str = std.fmt.bufPrint(&buf, "</h{d}>", .{@as(u8, @intCast(level))}) catch unreachable;
+            break :blk str;
+        },
+        c.MD_BLOCK_CODE => "</pre></code>",
+        c.MD_BLOCK_HTML => "</html>",
+        c.MD_BLOCK_P => "</p>",
+        c.MD_BLOCK_TABLE => "</table>",
+        c.MD_BLOCK_THEAD => "</thead>",
+        c.MD_BLOCK_TBODY => "</tbody>",
+        c.MD_BLOCK_TR => "</tr>",
+        c.MD_BLOCK_TH => "</th>",
+        c.MD_BLOCK_TD => "</td>",
+        else => "----",
+    };
+    print("{s}\n", .{tag});
     return 0;
 }
 
 fn enter_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) callconv(.C) c_int {
+    _ = blk; // autofix
     _ = userdetail; // autofix
     _ = detail; // autofix
-    std.debug.print("Entering span {any}\n", .{blk});
+    print("<span>", .{});
     return 0;
 }
 
 fn leave_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) callconv(.C) c_int {
+    _ = blk; // autofix
     _ = userdetail; // autofix
     _ = detail; // autofix
-    std.debug.print("Leaving span {any}\n", .{blk});
+    print("</span>", .{});
     return 0;
 }
 
 fn text(blk: c.MD_TEXTTYPE, char: [*c]const c.MD_CHAR, size: c.MD_SIZE, userdata: ?*anyopaque) callconv(.C) c_int {
     _ = blk;
     _ = userdata;
-    std.debug.print("Handling text {s}\n", .{char[0..size]});
+    print("{s}\n", .{char[0..size]});
     return 0;
 }
 
 pub fn main() !void {
-    var alloc = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = alloc.deinit();
-    const allocator = alloc.allocator();
-
-    // const args = try std.process.argsAlloc(alloc);
-    // defer std.process.argsFree(alloc, args);
-    //
-    // for (args) |arg| {
-    //     std.debug.print("Arg: {s}.\n", .{arg});
-    // }
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
     var parser = c.MD_PARSER{
         .abi_version = 0,
@@ -77,7 +119,7 @@ pub fn main() !void {
         const file = try dir.openFile(entry.path, .{});
         const bytes_read = try file.readAll(&buf);
         if (bytes_read < buf.len) {
-            // std.debug.print("File {s}: {s}\n", .{ entry.path, buf });
+            // print("File {s}: {s}\n", .{ entry.path, buf });
             _ = c.md_parse(&buf, buf.len, &parser, null);
         }
         defer file.close();
