@@ -93,6 +93,28 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    // Parse the command line arguments. Config arguments that take a value
+    // must use '='. All arguments not starting with '--' are treated as input sources.
+    var sources = std.ArrayList([]u8).init(allocator);
+    defer sources.deinit();
+
+    for (args[1..]) |arg| {
+        if (!std.mem.startsWith(u8, arg, "--")) {
+            try sources.append(arg);
+            continue;
+        }
+    }
+
+    if (sources.items.len > 0) {
+        print("Sources to convert:\n", .{});
+        for (sources.items) |source| {
+            print("{s}\n", .{source});
+        }
+    }
+
     var parser = c.MD_PARSER{
         .abi_version = 0,
         .flags = c.MD_FLAG_TABLES | c.MD_FLAG_TASKLISTS | c.MD_FLAG_WIKILINKS | c.MD_FLAG_LATEXMATHSPANS | c.MD_FLAG_PERMISSIVEAUTOLINKS,
