@@ -1,21 +1,31 @@
 # TODO
 
-- [ ] (A) +html Implement HTML renderer
-- [ ] (A) +frontmatter read frontmatter, remove for further markdown parsing
-- [x] +cli Pass src directory via args
-- [ ] +frontmatter Filter out empty and drafts/private notes
+- Note
+- [ ] TODO
+- [x] Done
+- [-] Cancelled
+
+## 2024
+
+- [ ] Implement HTML renderer
+- [ ] Read frontmatter, remove for further markdown parsing
+- [ ] Filter out empty and drafts/private notes
 - [x] Integrate [`md4c`](https://github.com/mity/md4c)
-- [ ] +links Generate slugs for filenames and headers
-- [ ] +links Process Wiki-style links
-- [ ] +links Generate Table of Contents
-- [ ] +links Collect backlinks
-- [ ] +html Implement templating
-- [ ] +frontmatter collect js, css assets and meta headers
-- [ ] +js Bundle JS & CSS (get dep graph, dedupe, bundle with esbuild)
-- [ ] +html Copy linked images/files to `/public`
-- [ ] +tests Add tests for [Git book](https://github.com/progit/progit/tree/master/en)
-- [ ] +tests Add tests for Obsidian vault
-- [ ] +js SPA navigation
-- [ ] +js Components/frameworks support
-- [ ] +sync Fetch content from git repo
-- [ ] +sync Generate changelog from git
+- [ ] Generate slugs for filenames and headers
+- [ ] Process Wiki-style links
+- [ ] Generate Table of Contents
+- [ ] Collect backlinks
+- [ ] Implement templating
+- [ ] collect js, css assets and meta headers
+- [ ] Bundle JS & CSS (get dep graph, dedupe, bundle with esbuild)
+- [ ] Copy linked images/files to `/public`
+- [ ] Add tests for [Git book](https://github.com/progit/progit/tree/master/en)
+- [ ] Add tests for Obsidian vault
+- [ ] SPA navigation
+- [ ] Components/frameworks support
+- [ ] Fetch content from git repo
+- [ ] Generate changelog from git
+
+## 2025-02-05
+
+- [x] Pass src directory via args
