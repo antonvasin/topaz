@@ -17,7 +17,7 @@ fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque
         c.MD_BLOCK_H => blk: {
             var buf: [16]u8 = undefined;
             const level = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail))).level;
-            const str = std.fmt.bufPrint(&buf, "<h{d}>", .{@as(u8, @intCast(level))}) catch unreachable;
+            const str = std.fmt.bufPrint(&buf, "<h{d}>", .{@as(u32, @intCast(level))}) catch unreachable;
             break :blk str;
         },
         c.MD_BLOCK_CODE => "<pre><code>",
@@ -47,7 +47,7 @@ fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque
         c.MD_BLOCK_H => blk: {
             var buf: [16]u8 = undefined;
             const level = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail))).level;
-            const str = std.fmt.bufPrint(&buf, "</h{d}>", .{@as(u8, @intCast(level))}) catch unreachable;
+            const str = std.fmt.bufPrint(&buf, "</h{d}>", .{@as(u32, @intCast(level))}) catch unreachable;
             break :blk str;
         },
         c.MD_BLOCK_CODE => "</pre></code>",
@@ -88,6 +88,19 @@ fn text(blk: c.MD_TEXTTYPE, char: [*c]const c.MD_CHAR, size: c.MD_SIZE, userdata
     return 0;
 }
 
+fn processFile(path: []const u8, parser: *const c.MD_PARSER) !void {
+    print("Processing '{s}...'\n", .{path});
+    var buf: [1 << 10]u8 = undefined;
+    const file = try std.fs.cwd().openFile(path, .{});
+    const bytes_read = try file.readAll(&buf);
+    if (bytes_read < buf.len) {
+        // TODO: we probably want a nice wrapper around md4c and its C types
+        _ = c.md_parse(&buf, @intCast(bytes_read), parser, null);
+        print("\n\n", .{});
+    }
+    defer file.close();
+}
+
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -95,26 +108,27 @@ pub fn main() !void {
 
     const args = try std.process.argsAlloc(allocator);
 
+    // User arguments
+    var arg_sources = std.ArrayList([]const u8).init(allocator);
+
     // Parse the command line arguments. Config arguments that take a value
     // must use '='. All arguments not starting with '--' are treated as input sources.
-    var sources = std.ArrayList([]u8).init(allocator);
-
     for (args[1..]) |arg| {
         if (!std.mem.startsWith(u8, arg, "--")) {
-            try sources.append(arg);
+            try arg_sources.append(arg);
             continue;
         }
     }
 
-    if (sources.items.len > 0) {
+    if (arg_sources.items.len > 0) {
         print("Sources to convert:\n", .{});
-        for (sources.items) |source| {
+        for (arg_sources.items) |source| {
             print("{s}\n", .{source});
         }
         print("\n", .{});
     }
 
-    var parser = c.MD_PARSER{
+    const parser = c.MD_PARSER{
         .abi_version = 0,
         .flags = c.MD_FLAG_TABLES | c.MD_FLAG_TASKLISTS | c.MD_FLAG_WIKILINKS | c.MD_FLAG_LATEXMATHSPANS | c.MD_FLAG_PERMISSIVEAUTOLINKS,
         .enter_block = enter_block,
@@ -126,24 +140,34 @@ pub fn main() !void {
         .syntax = null,
     };
 
-    var dir = try std.fs.cwd().openDir(".", .{ .iterate = true });
-    defer dir.close();
-    var walker = try dir.walk(allocator);
+    var processed_sources = std.StringHashMap([]const u8).init(allocator);
 
-    var buf: [1 << 10]u8 = undefined;
-    while (try walker.next()) |entry| {
-        if (entry.kind != .file) continue;
-        const ext = std.fs.path.extension(entry.basename);
-        if (!std.mem.eql(u8, ext, ".md")) continue;
+    for (arg_sources.items) |source| {
+        const path = try std.fs.realpathAlloc(allocator, source);
+        const stat = try std.fs.cwd().statFile(path);
 
-        const file = try dir.openFile(entry.path, .{});
-        const bytes_read = try file.readAll(&buf);
-        if (bytes_read < buf.len) {
-            print("Processing '{s}...'\n", .{entry.path});
-            _ = c.md_parse(&buf, @intCast(bytes_read), &parser, null);
-            print("\n\n", .{});
+        if (stat.kind == .directory) {
+            // Collect all .md files from dirs
+            var dir = try std.fs.cwd().openDir(".", .{ .iterate = true });
+            defer dir.close();
+            var walker = try dir.walk(allocator);
+
+            while (try walker.next()) |entry| {
+                if (entry.kind == .file and std.mem.eql(u8, std.fs.path.extension(entry.basename), ".md")) {
+                    const absolute_path = try std.fs.realpathAlloc(allocator, entry.path);
+                    _ = try processed_sources.getOrPut(absolute_path);
+                }
+            }
+        } else if (stat.kind == .file and std.mem.eql(u8, std.fs.path.extension(path), ".md")) {
+            // Collect individual files
+            const path_copy = try allocator.dupe(u8, path);
+            _ = try processed_sources.getOrPut(path_copy);
         }
-        defer file.close();
+    }
+
+    var iter = processed_sources.keyIterator();
+    while (iter.next()) |file| {
+        try processFile(file.*, &parser);
     }
 }
 

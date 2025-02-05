@@ -2,7 +2,7 @@
 
 - [ ] (A) +html Implement HTML renderer
 - [ ] (A) +frontmatter read frontmatter, remove for further markdown parsing
-- [ ] Pass src directory via args
+- [x] +cli Pass src directory via args
 - [ ] +frontmatter Filter out empty and drafts/private notes
 - [x] Integrate [`md4c`](https://github.com/mity/md4c)
 - [ ] +links Generate slugs for filenames and headers
