@@ -31,7 +31,7 @@ fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque
         c.MD_BLOCK_TD => "<td>",
         else => "----",
     };
-    print("{s}\n", .{tag});
+    print("{s}", .{tag});
     return 0;
 }
 
@@ -61,7 +61,7 @@ fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque
         c.MD_BLOCK_TD => "</td>",
         else => "----",
     };
-    print("{s}\n", .{tag});
+    print("{s}", .{tag});
     return 0;
 }
 
@@ -84,7 +84,7 @@ fn leave_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) 
 fn text(blk: c.MD_TEXTTYPE, char: [*c]const c.MD_CHAR, size: c.MD_SIZE, userdata: ?*anyopaque) callconv(.C) c_int {
     _ = blk;
     _ = userdata;
-    print("{s}\n", .{char[0..size]});
+    print("{s}", .{char[0..size]});
     return 0;
 }
 
@@ -113,6 +113,7 @@ pub fn main() !void {
         for (sources.items) |source| {
             print("{s}\n", .{source});
         }
+        print("\n", .{});
     }
 
     var parser = c.MD_PARSER{
@@ -141,8 +142,9 @@ pub fn main() !void {
         const file = try dir.openFile(entry.path, .{});
         const bytes_read = try file.readAll(&buf);
         if (bytes_read < buf.len) {
-            // print("File {s}: {s}\n", .{ entry.path, buf });
-            _ = c.md_parse(&buf, buf.len, &parser, null);
+            print("Processing '{s}...'\n", .{ entry.path });
+            _ = c.md_parse(&buf, @intCast(bytes_read), &parser, null);
+            print("\n\n", .{});
         }
         defer file.close();
     }
