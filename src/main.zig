@@ -89,17 +89,15 @@ fn text(blk: c.MD_TEXTTYPE, char: [*c]const c.MD_CHAR, size: c.MD_SIZE, userdata
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
     const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
 
     // Parse the command line arguments. Config arguments that take a value
     // must use '='. All arguments not starting with '--' are treated as input sources.
     var sources = std.ArrayList([]u8).init(allocator);
-    defer sources.deinit();
 
     for (args[1..]) |arg| {
         if (!std.mem.startsWith(u8, arg, "--")) {
@@ -131,7 +129,6 @@ pub fn main() !void {
     var dir = try std.fs.cwd().openDir(".", .{ .iterate = true });
     defer dir.close();
     var walker = try dir.walk(allocator);
-    defer walker.deinit();
 
     var buf: [1 << 10]u8 = undefined;
     while (try walker.next()) |entry| {
@@ -142,7 +139,7 @@ pub fn main() !void {
         const file = try dir.openFile(entry.path, .{});
         const bytes_read = try file.readAll(&buf);
         if (bytes_read < buf.len) {
-            print("Processing '{s}...'\n", .{ entry.path });
+            print("Processing '{s}...'\n", .{entry.path});
             _ = c.md_parse(&buf, @intCast(bytes_read), &parser, null);
             print("\n\n", .{});
         }
