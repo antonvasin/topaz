@@ -5,6 +5,24 @@ const c = @cImport({
     @cInclude("md4c.h");
 });
 
+const headers_openning_tags: [6][]const u8 = .{
+    "<h1>",
+    "<h2>",
+    "<h3>",
+    "<h4>",
+    "<h5>",
+    "<h6>",
+};
+
+const headers_closing_tags: [6][]const u8 = .{
+    "</h1>\n",
+    "</h2>\n",
+    "</h3>\n",
+    "</h4>\n",
+    "</h5>\n",
+    "</h6>\n",
+};
+
 fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) callconv(.C) c_int {
     _ = userdetail; // autofix
     const tag = switch (blk) {
@@ -15,10 +33,8 @@ fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque
         c.MD_BLOCK_LI => "<li>",
         c.MD_BLOCK_HR => "<hr>",
         c.MD_BLOCK_H => blk: {
-            var buf: [16]u8 = undefined;
             const level = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail))).level;
-            const str = std.fmt.bufPrint(&buf, "<h{d}>", .{@as(u32, @intCast(level))}) catch unreachable;
-            break :blk str;
+            break :blk headers_openning_tags[level - 1];
         },
         c.MD_BLOCK_CODE => "<pre><code>",
         c.MD_BLOCK_HTML => "<html>",
@@ -45,10 +61,8 @@ fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque
         c.MD_BLOCK_LI => "</li>",
         c.MD_BLOCK_HR => "</hr>",
         c.MD_BLOCK_H => blk: {
-            var buf: [16]u8 = undefined;
             const level = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail))).level;
-            const str = std.fmt.bufPrint(&buf, "</h{d}>", .{@as(u32, @intCast(level))}) catch unreachable;
-            break :blk str;
+            break :blk headers_closing_tags[level - 1];
         },
         c.MD_BLOCK_CODE => "</pre></code>",
         c.MD_BLOCK_HTML => "</html>",
@@ -81,7 +95,7 @@ fn enter_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) 
         c.MD_SPAN_LATEXMATH => "<x-equation>",
         c.MD_SPAN_LATEXMATH_DISPLAY => "<x-equation type=\"display\">",
         c.MD_SPAN_WIKILINK => "<a>",
-        else => "---"
+        else => "---",
     };
 
     print("{s}", .{tag});
@@ -104,7 +118,7 @@ fn leave_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) 
         c.MD_SPAN_LATEXMATH => "</x-equation>",
         c.MD_SPAN_LATEXMATH_DISPLAY => "</x-equation type=\"display\">",
         c.MD_SPAN_WIKILINK => "</a>",
-        else => "---"
+        else => "---",
     };
 
     print("{s}", .{tag});
