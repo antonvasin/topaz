@@ -66,18 +66,48 @@ fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque
 }
 
 fn enter_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) callconv(.C) c_int {
-    _ = blk; // autofix
     _ = userdetail; // autofix
     _ = detail; // autofix
-    print("<span>", .{});
+
+    // FIXME: add support for span attributes
+    const tag = switch (blk) {
+        c.MD_SPAN_EM => "<em>",
+        c.MD_SPAN_STRONG => "<strong>",
+        c.MD_SPAN_U => "<u>",
+        c.MD_SPAN_A => "<a>",
+        c.MD_SPAN_IMG => "<img>",
+        c.MD_SPAN_CODE => "<code>",
+        c.MD_SPAN_DEL => "<del>",
+        c.MD_SPAN_LATEXMATH => "<x-equation>",
+        c.MD_SPAN_LATEXMATH_DISPLAY => "<x-equation type=\"display\">",
+        c.MD_SPAN_WIKILINK => "<a>",
+        else => "---"
+    };
+
+    print("{s}", .{tag});
     return 0;
 }
 
 fn leave_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) callconv(.C) c_int {
-    _ = blk; // autofix
     _ = userdetail; // autofix
     _ = detail; // autofix
-    print("</span>", .{});
+
+    // FIXME: add support for span attributes
+    const tag = switch (blk) {
+        c.MD_SPAN_EM => "</em>",
+        c.MD_SPAN_STRONG => "</strong>",
+        c.MD_SPAN_U => "</u>",
+        c.MD_SPAN_A => "</a>",
+        c.MD_SPAN_IMG => "</img>",
+        c.MD_SPAN_CODE => "</code>",
+        c.MD_SPAN_DEL => "</del>",
+        c.MD_SPAN_LATEXMATH => "</x-equation>",
+        c.MD_SPAN_LATEXMATH_DISPLAY => "</x-equation type=\"display\">",
+        c.MD_SPAN_WIKILINK => "</a>",
+        else => "---"
+    };
+
+    print("{s}", .{tag});
     return 0;
 }
 
@@ -140,6 +170,7 @@ pub fn main() !void {
         .syntax = null,
     };
 
+    // Collect inputs for processing
     var processed_sources = std.StringHashMap([]const u8).init(allocator);
 
     for (arg_sources.items) |source| {
