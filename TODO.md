@@ -14,7 +14,7 @@
 - [x] Integrate [`md4c`](https://github.com/mity/md4c)
 - [ ] Generate slugs for URLs and headers
 - [ ] Process Wiki-style links
-- [ ] Generate Table of Contents
+- [ ] Generate Table of Contents for single page
 - [ ] Collect backlinks
 - [ ] Implement templating
 - [ ] Collect js, css assets and meta headers
@@ -32,3 +32,7 @@
 - [x] Pass sources via args
 - [ ] Replace reserved chars with HTML entities
 - [ ] Pass output dir via args
+
+## 2025-02-07
+
+- [ ] Generate chronological Archive/All posts info

@@ -83,7 +83,7 @@ fn enter_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) 
     _ = userdetail; // autofix
     _ = detail; // autofix
 
-    // FIXME: add support for span attributes
+    // TODO: add support for span attributes
     const tag = switch (blk) {
         c.MD_SPAN_EM => "<em>",
         c.MD_SPAN_STRONG => "<strong>",
@@ -106,7 +106,7 @@ fn leave_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) 
     _ = userdetail; // autofix
     _ = detail; // autofix
 
-    // FIXME: add support for span attributes
+    // TODO: add support for span attributes
     const tag = switch (blk) {
         c.MD_SPAN_EM => "</em>",
         c.MD_SPAN_STRONG => "</strong>",
@@ -132,6 +132,7 @@ fn text(blk: c.MD_TEXTTYPE, char: [*c]const c.MD_CHAR, size: c.MD_SIZE, userdata
     return 0;
 }
 
+// TODO: write to disk
 fn processFile(path: []const u8, parser: *const c.MD_PARSER) !void {
     print("Processing '{s}...'\n", .{path});
     var buf: [1 << 10]u8 = undefined;
@@ -151,6 +152,7 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     const args = try std.process.argsAlloc(allocator);
+    var dest_arg: [std.fs.max_path_bytes]u8 = undefined;
 
     // User arguments
     var arg_sources = std.ArrayList([]const u8).init(allocator);
@@ -161,6 +163,10 @@ pub fn main() !void {
         if (!std.mem.startsWith(u8, arg, "--")) {
             try arg_sources.append(arg);
             continue;
+        } else {
+            if (std.mem.startsWith(u8, arg, "--out=")) {
+                std.mem.copyForwards(u8, &dest_arg, arg[6..]);
+            }
         }
     }
 
@@ -171,6 +177,9 @@ pub fn main() !void {
         }
         print("\n", .{});
     }
+
+    dest_arg += '\n';
+    print("Out dir is '{s}'\n", .{dest_arg});
 
     const parser = c.MD_PARSER{
         .abi_version = 0,
