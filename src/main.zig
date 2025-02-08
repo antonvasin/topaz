@@ -5,26 +5,18 @@ const c = @cImport({
     @cInclude("md4c.h");
 });
 
-const headers_openning_tags: [6][]const u8 = .{
-    "<h1>",
-    "<h2>",
-    "<h3>",
-    "<h4>",
-    "<h5>",
-    "<h6>",
-};
+fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
+    _ = userdata; // autofix
+    //
+    const headers_openning_tags: [6][]const u8 = .{
+        "<h1>",
+        "<h2>",
+        "<h3>",
+        "<h4>",
+        "<h5>",
+        "<h6>",
+    };
 
-const headers_closing_tags: [6][]const u8 = .{
-    "</h1>\n",
-    "</h2>\n",
-    "</h3>\n",
-    "</h4>\n",
-    "</h5>\n",
-    "</h6>\n",
-};
-
-fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) callconv(.C) c_int {
-    _ = userdetail; // autofix
     const tag = switch (blk) {
         c.MD_BLOCK_DOC => "<body>",
         c.MD_BLOCK_QUOTE => "<blockquote>",
@@ -51,8 +43,18 @@ fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque
     return 0;
 }
 
-fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) callconv(.C) c_int {
-    _ = userdetail; // autofix
+fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
+    _ = userdata; // autofix
+
+    const headers_closing_tags: [6][]const u8 = .{
+        "</h1>\n",
+        "</h2>\n",
+        "</h3>\n",
+        "</h4>\n",
+        "</h5>\n",
+        "</h6>\n",
+    };
+
     const tag = switch (blk) {
         c.MD_BLOCK_DOC => "</body>",
         c.MD_BLOCK_QUOTE => "</blockquote>",
@@ -79,8 +81,8 @@ fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque
     return 0;
 }
 
-fn enter_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) callconv(.C) c_int {
-    _ = userdetail; // autofix
+fn enter_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
+    _ = userdata; // autofix
     _ = detail; // autofix
 
     // TODO: add support for span attributes
@@ -102,8 +104,8 @@ fn enter_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) 
     return 0;
 }
 
-fn leave_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdetail: ?*anyopaque) callconv(.C) c_int {
-    _ = userdetail; // autofix
+fn leave_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
+    _ = userdata; // autofix
     _ = detail; // autofix
 
     // TODO: add support for span attributes
@@ -153,6 +155,11 @@ pub fn main() !void {
 
     const args = try std.process.argsAlloc(allocator);
     var dest_arg: [std.fs.max_path_bytes]u8 = undefined;
+    var dest_len: usize = 0;
+
+    const default_dest = ".";
+    @memcpy(dest_arg[0..default_dest.len], default_dest);
+    dest_len = default_dest.len;
 
     // User arguments
     var arg_sources = std.ArrayList([]const u8).init(allocator);
@@ -165,10 +172,19 @@ pub fn main() !void {
             continue;
         } else {
             if (std.mem.startsWith(u8, arg, "--out=")) {
-                std.mem.copyForwards(u8, &dest_arg, arg[6..]);
+                const out = arg[6..];
+                @memcpy(dest_arg[0..out.len], out);
+                dest_len = out.len;
             }
         }
     }
+
+    // This code errors when dest_arg path does not exist. Create destination
+    // folder when not present
+    try std.fs.cwd().makePath(dest_arg[0..dest_len]);
+    const resolved_dest = try std.fs.realpathAlloc(allocator, dest_arg[0..dest_len]);
+    @memcpy(dest_arg[0..resolved_dest.len], resolved_dest);
+    dest_len = resolved_dest.len;
 
     if (arg_sources.items.len > 0) {
         print("Sources to convert:\n", .{});
@@ -178,8 +194,8 @@ pub fn main() !void {
         print("\n", .{});
     }
 
-    dest_arg += '\n';
-    print("Out dir is '{s}'\n", .{dest_arg});
+
+    print("Out dir is '{s}'\n", .{dest_arg[0..dest_len]});
 
     const parser = c.MD_PARSER{
         .abi_version = 0,
