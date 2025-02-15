@@ -136,7 +136,6 @@ fn text(blk: c.MD_TEXTTYPE, char: [*c]const c.MD_CHAR, size: c.MD_SIZE, userdata
 
 // TODO: write to disk
 fn processFile(path: []const u8, parser: *const c.MD_PARSER) !void {
-    print("Processing '{s}...'\n", .{path});
     var buf: [1 << 10]u8 = undefined;
     const file = try std.fs.cwd().openFile(path, .{});
     const bytes_read = try file.readAll(&buf);
@@ -179,21 +178,20 @@ pub fn main() !void {
         }
     }
 
-    // This code errors when dest_arg path does not exist. Create destination
-    // folder when not present
+    // print("Out before {s}\n\n\n", .{dest_arg});
     try std.fs.cwd().makePath(dest_arg[0..dest_len]);
     const resolved_dest = try std.fs.realpathAlloc(allocator, dest_arg[0..dest_len]);
     @memcpy(dest_arg[0..resolved_dest.len], resolved_dest);
     dest_len = resolved_dest.len;
 
     if (arg_sources.items.len > 0) {
-        print("Sources to convert:\n", .{});
-        for (arg_sources.items) |source| {
-            print("{s}\n", .{source});
+        print("Sources to convert: ", .{});
+        for (arg_sources.items, 0..) |source, i| {
+            if (i > 0) print(", ", .{});
+            print("\"{s}\"", .{source});
         }
         print("\n", .{});
     }
-
 
     print("Out dir is '{s}'\n", .{dest_arg[0..dest_len]});
 
@@ -237,6 +235,15 @@ pub fn main() !void {
 
     var iter = processed_sources.keyIterator();
     while (iter.next()) |file| {
+        const dest_base_path = std.fs.path.stem(file.*);
+        const dest_path = try std.fs.path.join(allocator, &[_][]const u8{
+            dest_arg[0..dest_len],
+            try std.fmt.allocPrint(allocator, "{s}.html", .{dest_base_path})
+        });
+
+        const dest_file = try std.fs.createFileAbsolute(dest_path, .{});
+        defer dest_file.close();
+        print("Processing {s} -> {s}...\n\n", .{file.*, dest_path});
         try processFile(file.*, &parser);
     }
 }
