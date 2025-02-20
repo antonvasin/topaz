@@ -5,9 +5,36 @@ const c = @cImport({
     @cInclude("md4c.h");
 });
 
+const INDENT_STEP = "  ";
+
+const html_head_open =
+    \\<!DOCTYPE html>
+    \\<html>
+    \\  <head>
+    \\    <meta name="generator" content="topaz">
+    \\    <meta charset="UTF-8">
+;
+
+const html_head_close =
+    \\
+    \\  </head>
+    \\  <body>
+;
+
+const html_body_close =
+    \\
+    \\  </body>
+    \\</html>
+;
+
+const RenderContext = struct {
+    buf: *std.ArrayList(u8),
+    indent_level: usize = 0,
+};
+
 fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
-    _ = userdata; // autofix
-    //
+    const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
+
     const headers_openning_tags: [6][]const u8 = .{
         "<h1>",
         "<h2>",
@@ -39,12 +66,14 @@ fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) 
         c.MD_BLOCK_TD => "<td>",
         else => "----",
     };
-    print("{s}", .{tag});
+    ctx.buf.appendSlice(tag) catch return 1;
+    ctx.buf.append('\n') catch return 1;
+
     return 0;
 }
 
 fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
-    _ = userdata; // autofix
+    const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
 
     const headers_closing_tags: [6][]const u8 = .{
         "</h1>\n",
@@ -77,12 +106,15 @@ fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) 
         c.MD_BLOCK_TD => "</td>",
         else => "----",
     };
-    print("{s}", .{tag});
+
+    ctx.buf.appendSlice(tag) catch return 1;
+    ctx.buf.append('\n') catch return 1;
+
     return 0;
 }
 
 fn enter_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
-    _ = userdata; // autofix
+    const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
     _ = detail; // autofix
 
     // TODO: add support for span attributes
@@ -99,13 +131,14 @@ fn enter_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) ca
         c.MD_SPAN_WIKILINK => "<a>",
         else => "---",
     };
+    ctx.buf.appendSlice(tag) catch return 1;
+    ctx.buf.append('\n') catch return 1;
 
-    print("{s}", .{tag});
     return 0;
 }
 
 fn leave_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
-    _ = userdata; // autofix
+    const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
     _ = detail; // autofix
 
     // TODO: add support for span attributes
@@ -123,26 +156,25 @@ fn leave_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) ca
         else => "---",
     };
 
-    print("{s}", .{tag});
+    ctx.buf.appendSlice(tag) catch return 1;
+    ctx.buf.append('\n') catch return 1;
+
     return 0;
 }
 
 fn text(blk: c.MD_TEXTTYPE, char: [*c]const c.MD_CHAR, size: c.MD_SIZE, userdata: ?*anyopaque) callconv(.C) c_int {
+    const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
     _ = blk;
-    _ = userdata;
-    print("{s}", .{char[0..size]});
+    ctx.buf.appendSlice(char[0..size]) catch return 1;
     return 0;
 }
 
-// TODO: write to disk
-fn processFile(path: []const u8, parser: *const c.MD_PARSER) !void {
+fn processFile(file: std.fs.File, parser: *const c.MD_PARSER, ctx: *RenderContext) !void {
     var buf: [1 << 10]u8 = undefined;
-    const file = try std.fs.cwd().openFile(path, .{});
     const bytes_read = try file.readAll(&buf);
     if (bytes_read < buf.len) {
-        // TODO: we probably want a nice wrapper around md4c and its C types
-        _ = c.md_parse(&buf, @intCast(bytes_read), parser, null);
-        print("\n\n", .{});
+        // _ = c.md_parse(&buf, @intCast(bytes_read), parser, @ptrCast(@constCast(&out_buf)));
+        _ = c.md_parse(&buf, @intCast(bytes_read), parser, ctx);
     }
     defer file.close();
 }
@@ -178,7 +210,6 @@ pub fn main() !void {
         }
     }
 
-    // print("Out before {s}\n\n\n", .{dest_arg});
     try std.fs.cwd().makePath(dest_arg[0..dest_len]);
     const resolved_dest = try std.fs.realpathAlloc(allocator, dest_arg[0..dest_len]);
     @memcpy(dest_arg[0..resolved_dest.len], resolved_dest);
@@ -193,7 +224,7 @@ pub fn main() !void {
         print("\n", .{});
     }
 
-    print("Out dir is '{s}'\n", .{dest_arg[0..dest_len]});
+    print("Out dir is \"{s}\"\n", .{dest_arg[0..dest_len]});
 
     const parser = c.MD_PARSER{
         .abi_version = 0,
@@ -234,17 +265,32 @@ pub fn main() !void {
     }
 
     var iter = processed_sources.keyIterator();
-    while (iter.next()) |file| {
-        const dest_base_path = std.fs.path.stem(file.*);
-        const dest_path = try std.fs.path.join(allocator, &[_][]const u8{
-            dest_arg[0..dest_len],
-            try std.fmt.allocPrint(allocator, "{s}.html", .{dest_base_path})
-        });
+    while (iter.next()) |path| {
+        const file = try std.fs.cwd().openFile(path.*, .{});
+        const stat = try file.stat();
 
+        // Constructing "/dest/path/file.html"
+        const dest_path = try std.fs.path.join(allocator, &[_][]const u8{ dest_arg[0..dest_len], try std.fmt.allocPrint(allocator, "{s}.html", .{std.fs.path.stem(path.*)}) });
         const dest_file = try std.fs.createFileAbsolute(dest_path, .{});
         defer dest_file.close();
-        print("Processing {s} -> {s}...\n\n", .{file.*, dest_path});
-        try processFile(file.*, &parser);
+
+        var out_buf = std.ArrayList(u8).init(allocator);
+        defer out_buf.deinit();
+
+        var ctx = RenderContext{
+            .buf = &out_buf,
+        };
+
+        try out_buf.appendSlice(html_head_open);
+        try out_buf.appendSlice(html_head_close);
+
+        print("Processing {s} ({d} bytes) -> {s}...\n\n", .{ path.*, stat.size, dest_path });
+
+        try processFile(file, &parser, &ctx);
+        try out_buf.appendSlice(html_body_close);
+        try out_buf.append('\n');
+        const fw = dest_file.writer();
+        _ = try fw.writeAll(out_buf.items);
     }
 }
 
