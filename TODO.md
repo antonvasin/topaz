@@ -9,7 +9,7 @@
 ## 2024
 
 - [ ] Implement basic HTML renderer
-- [ ] Read and parse frontmatter
+- [ ] Read and parse frontmatter, probably with [zig-yaml](https://github.com/kubkon/zig-yaml/)
 - [ ] Filter out empty and drafts/private notes
 - [x] Integrate [`md4c`](https://github.com/mity/md4c)
 - [ ] Generate slugs for URLs and headers
