@@ -1,11 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const print = std.debug.print;
 const c = @cImport({
     @cInclude("md4c.h");
 });
 
-const INDENT_STEP = "  ";
+const print = std.debug.print;
 
 const html_head_open =
     \\<!DOCTYPE html>
@@ -19,6 +18,7 @@ const html_head_close =
     \\
     \\  </head>
     \\  <body>
+    \\
 ;
 
 const html_body_close =
@@ -29,7 +29,6 @@ const html_body_close =
 
 const RenderContext = struct {
     buf: *std.ArrayList(u8),
-    indent_level: usize = 0,
 };
 
 fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
@@ -45,29 +44,27 @@ fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) 
     };
 
     const tag = switch (blk) {
-        c.MD_BLOCK_DOC => "<body>",
-        c.MD_BLOCK_QUOTE => "<blockquote>",
-        c.MD_BLOCK_UL => "<ul>",
-        c.MD_BLOCK_OL => "<ol>",
-        c.MD_BLOCK_LI => "<li>",
-        c.MD_BLOCK_HR => "<hr>",
+        c.MD_BLOCK_QUOTE => "<blockquote>\n",
+        c.MD_BLOCK_UL => "<ul>\n",
+        c.MD_BLOCK_OL => "<ol>\n",
+        c.MD_BLOCK_LI => "<li>\n",
+        c.MD_BLOCK_HR => "<hr>\n",
         c.MD_BLOCK_H => blk: {
             const level = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail))).level;
             break :blk headers_openning_tags[level - 1];
         },
-        c.MD_BLOCK_CODE => "<pre><code>",
-        c.MD_BLOCK_HTML => "<html>",
-        c.MD_BLOCK_P => "<p>",
-        c.MD_BLOCK_TABLE => "<table>",
-        c.MD_BLOCK_THEAD => "<thead>",
-        c.MD_BLOCK_TBODY => "<tbody>",
-        c.MD_BLOCK_TR => "<tr>",
+        c.MD_BLOCK_CODE => "<pre>\n<code>\n",
+        c.MD_BLOCK_P => "<p>\n",
+        c.MD_BLOCK_TABLE => "<table>\n",
+        c.MD_BLOCK_THEAD => "<thead>\n",
+        c.MD_BLOCK_TBODY => "<tbody>\n",
+        c.MD_BLOCK_TR => "<tr>\n",
         c.MD_BLOCK_TH => "<th>",
         c.MD_BLOCK_TD => "<td>",
-        else => "----",
+        else => "",
     };
+
     ctx.buf.appendSlice(tag) catch return 1;
-    ctx.buf.append('\n') catch return 1;
 
     return 0;
 }
@@ -85,30 +82,26 @@ fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) 
     };
 
     const tag = switch (blk) {
-        c.MD_BLOCK_DOC => "</body>",
-        c.MD_BLOCK_QUOTE => "</blockquote>",
-        c.MD_BLOCK_UL => "</ul>",
-        c.MD_BLOCK_OL => "</ol>",
-        c.MD_BLOCK_LI => "</li>",
-        c.MD_BLOCK_HR => "</hr>",
+        c.MD_BLOCK_QUOTE => "</blockquote>\n",
+        c.MD_BLOCK_UL => "</ul>\n",
+        c.MD_BLOCK_OL => "</ol>\n",
+        c.MD_BLOCK_LI => "</li>\n",
         c.MD_BLOCK_H => blk: {
             const level = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail))).level;
             break :blk headers_closing_tags[level - 1];
         },
-        c.MD_BLOCK_CODE => "</pre></code>",
-        c.MD_BLOCK_HTML => "</html>",
-        c.MD_BLOCK_P => "</p>",
-        c.MD_BLOCK_TABLE => "</table>",
-        c.MD_BLOCK_THEAD => "</thead>",
-        c.MD_BLOCK_TBODY => "</tbody>",
-        c.MD_BLOCK_TR => "</tr>",
-        c.MD_BLOCK_TH => "</th>",
-        c.MD_BLOCK_TD => "</td>",
-        else => "----",
+        c.MD_BLOCK_CODE => "</pre>\n</code>\n",
+        c.MD_BLOCK_P => "</p>\n",
+        c.MD_BLOCK_TABLE => "</table>\n",
+        c.MD_BLOCK_THEAD => "</thead>\n",
+        c.MD_BLOCK_TBODY => "</tbody>\n",
+        c.MD_BLOCK_TR => "</tr>\n",
+        c.MD_BLOCK_TH => "</th>\n",
+        c.MD_BLOCK_TD => "</td>\n",
+        else => "",
     };
 
     ctx.buf.appendSlice(tag) catch return 1;
-    ctx.buf.append('\n') catch return 1;
 
     return 0;
 }
@@ -132,7 +125,6 @@ fn enter_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) ca
         else => "---",
     };
     ctx.buf.appendSlice(tag) catch return 1;
-    ctx.buf.append('\n') catch return 1;
 
     return 0;
 }
@@ -157,15 +149,17 @@ fn leave_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) ca
     };
 
     ctx.buf.appendSlice(tag) catch return 1;
-    ctx.buf.append('\n') catch return 1;
 
     return 0;
 }
 
 fn text(blk: c.MD_TEXTTYPE, char: [*c]const c.MD_CHAR, size: c.MD_SIZE, userdata: ?*anyopaque) callconv(.C) c_int {
     const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
+    const slice = char[0..size];
+
+    // TODO: handle text type
     _ = blk;
-    ctx.buf.appendSlice(char[0..size]) catch return 1;
+    ctx.buf.appendSlice(slice) catch return 1;
     return 0;
 }
 
