@@ -108,14 +108,20 @@ fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) 
 
 fn enter_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
     const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
-    _ = detail; // autofix
 
     // TODO: add support for span attributes
     const tag = switch (blk) {
         c.MD_SPAN_EM => "<em>",
         c.MD_SPAN_STRONG => "<strong>",
         c.MD_SPAN_U => "<u>",
-        c.MD_SPAN_A => "<a>",
+        c.MD_SPAN_A =>  {
+            const a_detail = @as(*const c.MD_SPAN_A_DETAIL, @ptrCast(@alignCast(detail)));
+            ctx.buf.appendSlice("<a href=\"") catch return 1;
+            ctx.buf.appendSlice(a_detail.href.text[0..a_detail.href.size]) catch return 1;
+            ctx.buf.appendSlice("\">") catch return 1;
+
+            return 0;
+        },
         c.MD_SPAN_IMG => "<img>",
         c.MD_SPAN_CODE => "<code>",
         c.MD_SPAN_DEL => "<del>",
