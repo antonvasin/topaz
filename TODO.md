@@ -41,3 +41,7 @@
 - [ ] Render formulas with [KaTeX](https://github.com/KaTeX/KaTeX)
 - [ ] Write basic tests for md-html conversion
 - [ ] Pretty print HTML
+
+## 2025-03-12
+
+- Pin current pages version

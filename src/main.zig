@@ -12,23 +12,17 @@ const html_head_open =
     \\  <head>
     \\    <meta name="generator" content="topaz">
     \\    <meta charset="UTF-8">
-;
-
-const html_head_close =
-    \\
-    \\  </head>
-    \\  <body>
     \\
 ;
 
-const html_body_close =
-    \\
-    \\  </body>
-    \\</html>
-;
+const html_head_close = "\n</head>\n";
+const html_body_open = "  <body>\n";
+const html_body_close = "  </body>\n</html>";
 
 const RenderContext = struct {
     buf: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    page_title: []const u8 = "",
 };
 
 fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
@@ -114,7 +108,7 @@ fn enter_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) ca
         c.MD_SPAN_EM => "<em>",
         c.MD_SPAN_STRONG => "<strong>",
         c.MD_SPAN_U => "<u>",
-        c.MD_SPAN_A =>  {
+        c.MD_SPAN_A => {
             const a_detail = @as(*const c.MD_SPAN_A_DETAIL, @ptrCast(@alignCast(detail)));
             ctx.buf.appendSlice("<a href=\"") catch return 1;
             ctx.buf.appendSlice(a_detail.href.text[0..a_detail.href.size]) catch return 1;
@@ -181,8 +175,8 @@ fn processFile(file: std.fs.File, parser: *const c.MD_PARSER, ctx: *RenderContex
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
     const allocator = arena.allocator();
+    defer arena.deinit();
 
     const args = try std.process.argsAlloc(allocator);
     var dest_arg: [std.fs.max_path_bytes]u8 = undefined;
@@ -226,20 +220,9 @@ pub fn main() !void {
 
     print("Out dir is \"{s}\"\n", .{dest_arg[0..dest_len]});
 
-    const parser = c.MD_PARSER{
-        .abi_version = 0,
-        .flags = c.MD_FLAG_TABLES | c.MD_FLAG_TASKLISTS | c.MD_FLAG_WIKILINKS | c.MD_FLAG_LATEXMATHSPANS | c.MD_FLAG_PERMISSIVEAUTOLINKS,
-        .enter_block = enter_block,
-        .leave_block = leave_block,
-        .enter_span = enter_span,
-        .leave_span = leave_span,
-        .text = text,
-        .debug_log = null,
-        .syntax = null,
-    };
-
     // Collect inputs for processing
     var processed_sources = std.StringHashMap([]const u8).init(allocator);
+    var known_pages = std.StringHashMap(void).init(allocator);
 
     for (arg_sources.items) |source| {
         const path = try std.fs.realpathAlloc(allocator, source);
@@ -255,14 +238,28 @@ pub fn main() !void {
                 if (entry.kind == .file and std.mem.eql(u8, std.fs.path.extension(entry.basename), ".md")) {
                     const absolute_path = try std.fs.realpathAlloc(allocator, entry.path);
                     _ = try processed_sources.getOrPut(absolute_path);
+                    try known_pages.put(try allocator.dupe(u8, std.fs.path.stem(entry.basename)), {});
                 }
             }
         } else if (stat.kind == .file and std.mem.eql(u8, std.fs.path.extension(path), ".md")) {
             // Collect individual files
             const path_copy = try allocator.dupe(u8, path);
             _ = try processed_sources.getOrPut(path_copy);
+            try known_pages.put(try allocator.dupe(u8, std.fs.path.stem(std.fs.path.basename(path))), {});
         }
     }
+
+    const parser = c.MD_PARSER{
+        .abi_version = 0,
+        .flags = c.MD_FLAG_TABLES | c.MD_FLAG_TASKLISTS | c.MD_FLAG_WIKILINKS | c.MD_FLAG_LATEXMATHSPANS | c.MD_FLAG_PERMISSIVEAUTOLINKS | c.MD_FLAG_STRIKETHROUGH,
+        .enter_block = enter_block,
+        .leave_block = leave_block,
+        .enter_span = enter_span,
+        .leave_span = leave_span,
+        .text = text,
+        .debug_log = null,
+        .syntax = null,
+    };
 
     var iter = processed_sources.keyIterator();
     while (iter.next()) |path| {
@@ -270,7 +267,8 @@ pub fn main() !void {
         const stat = try file.stat();
 
         // Constructing "/dest/path/file.html"
-        const dest_path = try std.fs.path.join(allocator, &[_][]const u8{ dest_arg[0..dest_len], try std.fmt.allocPrint(allocator, "{s}.html", .{std.fs.path.stem(path.*)}) });
+        const page_name = std.fs.path.stem(std.fs.path.basename(path.*));
+        const dest_path = try std.fs.path.join(allocator, &[_][]const u8{ dest_arg[0..dest_len], try std.fmt.allocPrint(allocator, "{s}.html", .{page_name}) });
         const dest_file = try std.fs.createFileAbsolute(dest_path, .{});
         defer dest_file.close();
 
@@ -279,6 +277,8 @@ pub fn main() !void {
 
         var ctx = RenderContext{
             .buf = &out_buf,
+            .allocator = allocator,
+            .page_title = page_name,
         };
 
         try out_buf.appendSlice(html_head_open);
