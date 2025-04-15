@@ -178,75 +178,53 @@ pub fn main() !void {
     const allocator = arena.allocator();
     defer arena.deinit();
 
+    const default_dest = "topaz-out";
+    var dest_dir_path: [std.fs.max_path_bytes]u8 = undefined;
+    var dest_dir_path_len: usize = default_dest.len;
+    @memcpy(dest_dir_path[0..default_dest.len], default_dest);
+
+    // User arguments - support only one input path or current directory if none provided
+    var input_path: []const u8 = "."; // Default to current directory
+
     const args = try std.process.argsAlloc(allocator);
-    var dest_arg: [std.fs.max_path_bytes]u8 = undefined;
-    var dest_len: usize = 0;
-
-    const default_dest = ".";
-    @memcpy(dest_arg[0..default_dest.len], default_dest);
-    dest_len = default_dest.len;
-
-    // User arguments
-    var arg_sources = std.ArrayList([]const u8).init(allocator);
-
     // Parse the command line arguments. Config arguments that take a value
-    // must use '='. All arguments not starting with '--' are treated as input sources.
+    // must use '='. The first non-flag argument is treated as input source.
+    var found_input = false;
     for (args[1..]) |arg| {
         if (!std.mem.startsWith(u8, arg, "--")) {
-            try arg_sources.append(arg);
-            continue;
-        } else {
-            if (std.mem.startsWith(u8, arg, "--out=")) {
-                const out = arg[6..];
-                @memcpy(dest_arg[0..out.len], out);
-                dest_len = out.len;
+            if (!found_input) {
+                input_path = arg;
+                found_input = true;
             }
+        } else if (std.mem.startsWith(u8, arg, "--out=")) {
+            dest_dir_path_len = arg.len - 6;
+            @memcpy(dest_dir_path[0..dest_dir_path_len], arg[6..]);
         }
     }
-
-    try std.fs.cwd().makePath(dest_arg[0..dest_len]);
-    const resolved_dest = try std.fs.realpathAlloc(allocator, dest_arg[0..dest_len]);
-    @memcpy(dest_arg[0..resolved_dest.len], resolved_dest);
-    dest_len = resolved_dest.len;
-
-    if (arg_sources.items.len > 0) {
-        print("Sources to convert: ", .{});
-        for (arg_sources.items, 0..) |source, i| {
-            if (i > 0) print(", ", .{});
-            print("\"{s}\"", .{source});
-        }
-        print("\n", .{});
-    }
-
-    print("Out dir is \"{s}\"\n", .{dest_arg[0..dest_len]});
 
     // Collect inputs for processing
-    var processed_sources = std.StringHashMap([]const u8).init(allocator);
-    var known_pages = std.StringHashMap(void).init(allocator);
+    var input_files = std.StringHashMap([]const u8).init(allocator);
 
-    for (arg_sources.items) |source| {
-        const path = try std.fs.realpathAlloc(allocator, source);
-        const stat = try std.fs.cwd().statFile(path);
+    const input_path_absolute = try std.fs.realpathAlloc(allocator, input_path);
+    const stat = try std.fs.cwd().statFile(input_path_absolute);
+    print("Input arg resolved to '{s}'\n", .{input_path_absolute});
 
-        if (stat.kind == .directory) {
-            // Collect all .md files from dirs
-            var dir = try std.fs.cwd().openDir(".", .{ .iterate = true });
-            defer dir.close();
-            var walker = try dir.walk(allocator);
+    // Collect all .md files from dirs
+    if (stat.kind == .directory) {
+        var dir = try std.fs.cwd().openDir(input_path_absolute, .{ .iterate = true });
+        defer dir.close();
+        var walker = try dir.walk(allocator);
 
-            while (try walker.next()) |entry| {
-                if (entry.kind == .file and std.mem.eql(u8, std.fs.path.extension(entry.basename), ".md")) {
-                    const absolute_path = try std.fs.realpathAlloc(allocator, entry.path);
-                    _ = try processed_sources.getOrPut(absolute_path);
-                    try known_pages.put(try allocator.dupe(u8, std.fs.path.stem(entry.basename)), {});
-                }
+        while (try walker.next()) |entry| {
+            if (entry.kind == .file and std.mem.eql(u8, std.fs.path.extension(entry.basename), ".md")) {
+                const full_path = try std.fs.path.join(allocator, &[_][]const u8{ input_path_absolute, entry.path });
+                const rel_path = try allocator.dupe(u8, entry.path);
+                try input_files.put(full_path, rel_path);
             }
-        } else if (stat.kind == .file and std.mem.eql(u8, std.fs.path.extension(path), ".md")) {
-            // Collect individual files
-            const path_copy = try allocator.dupe(u8, path);
-            _ = try processed_sources.getOrPut(path_copy);
-            try known_pages.put(try allocator.dupe(u8, std.fs.path.stem(std.fs.path.basename(path))), {});
         }
+        // Collect individual files
+    } else if (stat.kind == .file and std.mem.eql(u8, std.fs.path.extension(input_path_absolute), ".md")) {
+        try input_files.put(input_path_absolute, std.fs.path.basename(input_path_absolute));
     }
 
     const parser = c.MD_PARSER{
@@ -261,15 +239,40 @@ pub fn main() !void {
         .syntax = null,
     };
 
-    var iter = processed_sources.keyIterator();
-    while (iter.next()) |path| {
-        const file = try std.fs.cwd().openFile(path.*, .{});
-        const stat = try file.stat();
+    // Create the output directory
+    const dest_dir = std.fs.path.resolve(allocator, &[_][]const u8{dest_dir_path[0..dest_dir_path_len]}) catch |err| {
+        print("Failed to resolve dest path: {any}\n", .{err});
+        return err;
+    };
+    @memcpy(dest_dir_path[0..dest_dir.len], dest_dir);
+    dest_dir_path_len = dest_dir.len;
+    print("Out dir is \"{s}\"\n", .{dest_dir_path[0..dest_dir_path_len]});
+    try std.fs.cwd().makePath(dest_dir);
 
-        // Constructing "/dest/path/file.html"
-        const page_name = std.fs.path.stem(std.fs.path.basename(path.*));
-        const dest_path = try std.fs.path.join(allocator, &[_][]const u8{ dest_arg[0..dest_len], try std.fmt.allocPrint(allocator, "{s}.html", .{page_name}) });
-        const dest_file = try std.fs.createFileAbsolute(dest_path, .{});
+    // Process input items
+    var iter = input_files.iterator();
+    while (iter.next()) |entry| {
+        const file_path = entry.key_ptr.*;
+        const relative_path = entry.value_ptr.*;
+
+        const file = try std.fs.cwd().openFile(file_path, .{});
+        const file_stat = try file.stat();
+
+        const dir_part = std.fs.path.dirname(relative_path) orelse "";
+
+        const dest_dir_full = if (dir_part.len > 0)
+            try std.fs.path.join(allocator, &[_][]const u8{ dest_dir_path[0..dest_dir_path_len], dir_part })
+        else
+            dest_dir_path[0..dest_dir_path_len];
+
+        try std.fs.cwd().makePath(dest_dir_full);
+
+        const page_name = std.fs.path.stem(std.fs.path.basename(relative_path));
+        const html_filename = try std.fmt.allocPrint(allocator, "{s}.html", .{page_name});
+
+        // Create full destination path
+        const dest_path = try std.fs.path.join(allocator, &[_][]const u8{ dest_dir_full, html_filename });
+        const dest_file = try std.fs.cwd().createFile(dest_path, .{});
         defer dest_file.close();
 
         var out_buf = std.ArrayList(u8).init(allocator);
@@ -283,12 +286,12 @@ pub fn main() !void {
 
         try out_buf.appendSlice(html_head_open);
         try out_buf.appendSlice(html_head_close);
-
-        print("Processing {s} ({d} bytes) -> {s}...\n\n", .{ path.*, stat.size, dest_path });
+        try out_buf.appendSlice(html_body_open);
 
         try processFile(file, &parser, &ctx);
         try out_buf.appendSlice(html_body_close);
         try out_buf.append('\n');
+        print("Processing {s} ({d}b)-> {s} ({d}b)...\n\n", .{ file_path, file_stat.size, dest_path, out_buf.items.len * @sizeOf(u8) });
         const fw = dest_file.writer();
         _ = try fw.writeAll(out_buf.items);
     }

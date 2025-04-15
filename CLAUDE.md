@@ -15,7 +15,7 @@
 - Write detailed comments explaining non-obvious code. Don't write unnecessary comments just explaining next line of code.
 - Write minimal amount of code to solve the problem. Avoid unnecessary variables.
 - Do not extract code into functions unless it is written at least 3 times.
-- Do not rename variables and functions not made by you.
+- Do not rename variables and functions.
 
 ## Project Information
 - Indexer and static site generator that converts markdown notes into HTML websistes
