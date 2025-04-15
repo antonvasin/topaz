@@ -164,12 +164,23 @@ fn text(blk: c.MD_TEXTTYPE, char: [*c]const c.MD_CHAR, size: c.MD_SIZE, userdata
 }
 
 fn processFile(file: std.fs.File, parser: *const c.MD_PARSER, ctx: *RenderContext) !void {
-    var buf: [1 << 10]u8 = undefined;
-    const bytes_read = try file.readAll(&buf);
-    if (bytes_read < buf.len) {
-        // _ = c.md_parse(&buf, @intCast(bytes_read), parser, @ptrCast(@constCast(&out_buf)));
-        _ = c.md_parse(&buf, @intCast(bytes_read), parser, ctx);
+    const file_size = try file.getEndPos();
+    var buf = try ctx.allocator.alloc(u8, file_size);
+    errdefer ctx.allocator.free(buf);
+    const bytes_read = try file.readAll(buf);
+    var yaml_end: usize = 0;
+
+    // Cutting out YAML
+    if (std.mem.startsWith(u8, buf, "---\n")) {
+        var i: usize = 4;
+        while (i < buf.len - 3) {
+            if (std.mem.eql(u8, buf[i .. i + 4], "\n---")) yaml_end = i + 4;
+            i += 1;
+        }
     }
+
+    if (yaml_end != 0) print("YAML found [0..{d}]\n", .{yaml_end});
+    _ = c.md_parse(@ptrCast(&buf[yaml_end]), @intCast(bytes_read - yaml_end), parser, ctx);
     defer file.close();
 }
 
