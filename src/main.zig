@@ -6,46 +6,11 @@ const c = @cImport({
 
 const print = std.debug.print;
 
-// Escape flags for character escaping
-const HTML_ESC_FLAG: u8 = 0x1;
-
-fn needsHtmlEscape(ctx: *RenderContext, ch: u8) bool {
-    return (ctx.escape_map[ch] & HTML_ESC_FLAG) != 0;
-}
-
-fn hexVal(ch: u8) u4 {
-    return switch (ch) {
-        '0'...'9' => @intCast(ch - '0'),
-        'A'...'F' => @intCast(ch - 'A' + 10),
-        'a'...'f' => @intCast(ch - 'a' + 10),
-        else => 0,
-    };
-}
-
 const RenderContext = struct {
     buf: *std.ArrayList(u8),
     allocator: std.mem.Allocator,
     page_title: []const u8 = "",
     image_nesting_level: u32 = 0,
-    escape_map: [256]u8 = undefined,
-
-    pub fn init(buf: *std.ArrayList(u8), allocator: std.mem.Allocator, title: []const u8) RenderContext {
-        var ctx = RenderContext{
-            .buf = buf,
-            .allocator = allocator,
-            .page_title = title,
-        };
-
-        // Only escape characters that must be escaped in HTML
-        @memset(&ctx.escape_map, 0);
-        ctx.escape_map['&'] = HTML_ESC_FLAG;
-        ctx.escape_map['<'] = HTML_ESC_FLAG;
-        ctx.escape_map['>'] = HTML_ESC_FLAG;
-        // Only needed in attribute values
-        ctx.escape_map['"'] = HTML_ESC_FLAG;
-
-        return ctx;
-    }
 
     // TODO: return status code for md4c callbacks to avoid typing `catch return 1`
     pub fn write(self: *RenderContext, str: []const u8) !void {
@@ -62,6 +27,7 @@ const RenderContext = struct {
         }
     }
 
+    /// Renders HTML entity as UTF-8 if possible
     fn renderEntity(self: *RenderContext, data: []const u8) !void {
         // Handle numeric entities
         if (data.len > 3 and data[1] == '#') {
@@ -71,7 +37,13 @@ const RenderContext = struct {
                 // Hexadecimal entity
                 var i: usize = 3;
                 while (i < data.len - 1) : (i += 1) {
-                    codepoint = 16 * codepoint + hexVal(data[i]);
+                    const hex_val: u4 = switch (data[i]) {
+                        '0'...'9' => @intCast(data[i] - '0'),
+                        'A'...'F' => @intCast(data[i] - 'A' + 10),
+                        'a'...'f' => @intCast(data[i] - 'a' + 10),
+                        else => 0,
+                    };
+                    codepoint = 16 * codepoint + hex_val;
                 }
             } else {
                 // Decimal entity
@@ -85,8 +57,7 @@ const RenderContext = struct {
             return;
         }
 
-        // This is a simplified version - a full implementation would have
-        // all HTML entities defined, but we'll just output the raw entity
+        // Write named entity as is without checking
         try self.write(data);
     }
 
@@ -95,8 +66,14 @@ const RenderContext = struct {
         var off: usize = 0;
 
         while (off < data.len) {
+            const ch = data[off];
+            const needs_escape = (ch == '&') or
+                (ch == '<') or
+                (ch == '>') or
+                (ch == '"') or false;
+
             // Skip characters that don't need escaping
-            while (off < data.len and !needsHtmlEscape(self, data[off])) {
+            while (off < data.len and !needs_escape) {
                 off += 1;
             }
 
@@ -572,7 +549,7 @@ pub fn main() !void {
         var out_buf = std.ArrayList(u8).init(allocator);
         defer out_buf.deinit();
 
-        var ctx = RenderContext.init(&out_buf, allocator, page_name);
+        var ctx = RenderContext{ .buf = &out_buf, .allocator = allocator, .page_title = page_name };
 
         try out_buf.appendSlice(html_head_open);
         try out_buf.appendSlice("<title>");
