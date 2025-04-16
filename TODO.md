@@ -45,3 +45,7 @@
 ## 2025-03-12
 
 - [ ] Pin current pages version
+
+## 2025-04-16
+
+- [ ] Generate RSS feed
