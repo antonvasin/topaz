@@ -147,3 +147,9 @@ $$
 $$
 
 That's it!
+
+## Links
+
+- [Regular link](https://antonvasin.com)
+- [Link with query params](https://domain.com?name=anton)
+- [Link with array query](https://domain.com?name[]=anton&name[]=anna)

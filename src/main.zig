@@ -6,23 +6,190 @@ const c = @cImport({
 
 const print = std.debug.print;
 
-const html_head_open =
-    \\<!DOCTYPE html>
-    \\<html>
-    \\  <head>
-    \\    <meta name="generator" content="topaz">
-    \\    <meta charset="UTF-8">
-    \\
-;
+// Escape flags for character escaping
+const HTML_ESC_FLAG: u8 = 0x1;
 
-const html_head_close = "\n</head>\n";
-const html_body_open = "  <body>\n";
-const html_body_close = "  </body>\n</html>";
+fn needsHtmlEscape(ctx: *RenderContext, ch: u8) bool {
+    return (ctx.escape_map[ch] & HTML_ESC_FLAG) != 0;
+}
+
+fn hexVal(ch: u8) u4 {
+    return switch (ch) {
+        '0'...'9' => @intCast(ch - '0'),
+        'A'...'F' => @intCast(ch - 'A' + 10),
+        'a'...'f' => @intCast(ch - 'a' + 10),
+        else => 0,
+    };
+}
 
 const RenderContext = struct {
     buf: *std.ArrayList(u8),
     allocator: std.mem.Allocator,
     page_title: []const u8 = "",
+    image_nesting_level: u32 = 0,
+    escape_map: [256]u8 = undefined,
+
+    pub fn init(buf: *std.ArrayList(u8), allocator: std.mem.Allocator, title: []const u8) RenderContext {
+        var ctx = RenderContext{
+            .buf = buf,
+            .allocator = allocator,
+            .page_title = title,
+        };
+
+        // Only escape characters that must be escaped in HTML
+        @memset(&ctx.escape_map, 0);
+        ctx.escape_map['&'] = HTML_ESC_FLAG;
+        ctx.escape_map['<'] = HTML_ESC_FLAG;
+        ctx.escape_map['>'] = HTML_ESC_FLAG;
+        // Only needed in attribute values
+        ctx.escape_map['"'] = HTML_ESC_FLAG;
+
+        return ctx;
+    }
+
+    // TODO: return status code for md4c callbacks to avoid typing `catch return 1`
+    pub fn write(self: *RenderContext, str: []const u8) !void {
+        try self.buf.appendSlice(str);
+    }
+
+    pub fn renderText(self: *RenderContext, text_type: c.MD_TEXTTYPE, data: []const u8) !void {
+        switch (text_type) {
+            c.MD_TEXT_NULLCHAR => try self.renderUtf8Codepoint(0),
+            c.MD_TEXT_HTML => try self.write(data),
+            c.MD_TEXT_ENTITY => try self.renderEntity(data),
+            c.MD_TEXT_CODE => try self.write(data),
+            else => try self.renderHtmlEscaped(data),
+        }
+    }
+
+    fn renderEntity(self: *RenderContext, data: []const u8) !void {
+        // Handle numeric entities
+        if (data.len > 3 and data[1] == '#') {
+            var codepoint: u32 = 0;
+
+            if (data[2] == 'x' or data[2] == 'X') {
+                // Hexadecimal entity
+                var i: usize = 3;
+                while (i < data.len - 1) : (i += 1) {
+                    codepoint = 16 * codepoint + hexVal(data[i]);
+                }
+            } else {
+                // Decimal entity
+                var i: usize = 2;
+                while (i < data.len - 1) : (i += 1) {
+                    codepoint = 10 * codepoint + (data[i] - '0');
+                }
+            }
+
+            try self.renderUtf8Codepoint(codepoint);
+            return;
+        }
+
+        // This is a simplified version - a full implementation would have
+        // all HTML entities defined, but we'll just output the raw entity
+        try self.write(data);
+    }
+
+    fn renderHtmlEscaped(self: *RenderContext, data: []const u8) !void {
+        var beg: usize = 0;
+        var off: usize = 0;
+
+        while (off < data.len) {
+            // Skip characters that don't need escaping
+            while (off < data.len and !needsHtmlEscape(self, data[off])) {
+                off += 1;
+            }
+
+            // Write the unescaped part
+            if (off > beg) {
+                try self.write(data[beg..off]);
+            }
+
+            // Handle only characters that absolutely need escaping in HTML
+            if (off < data.len) {
+                const char = data[off];
+                switch (char) {
+                    '&' => try self.write("&amp;"),
+                    '<' => try self.write("&lt;"),
+                    '>' => try self.write("&gt;"),
+                    '"' => try self.write("&quot;"),
+                    else => try self.write(&[_]u8{char}),
+                }
+                off += 1;
+            } else {
+                break;
+            }
+
+            beg = off;
+        }
+    }
+
+    fn renderUrlEscaped(self: *RenderContext, data: []const u8) !void {
+        for (data) |char| {
+            if ((char >= 'a' and char <= 'z') or
+                (char >= 'A' and char <= 'Z') or
+                (char >= '0' and char <= '9') or
+                char == '-' or
+                char == '.' or
+                char == '_' or
+                char == '~' or
+                char == '/' or
+                char == ':' or
+                char == '@')
+            {
+                // FIXME: use writer fn for single chars
+                try self.buf.append(char);
+            } else if (char == '&') {
+                try self.write("&amp;");
+            } else {
+                try self.buf.writer().print("%{X:0>2}", .{char});
+            }
+        }
+    }
+
+    fn renderUtf8Codepoint(self: *RenderContext, codepoint: u32) !void {
+        var buf: [4]u8 = undefined;
+        const len = try std.unicode.utf8Encode(@intCast(codepoint), &buf);
+        try self.write(buf[0..len]);
+    }
+
+    fn renderAttribute(self: *RenderContext, attr: *const c.MD_ATTRIBUTE) !void {
+        var i: usize = 0;
+        while (attr.substr_offsets[i] < attr.size) : (i += 1) {
+            const type_val = attr.substr_types[i];
+            const off = attr.substr_offsets[i];
+            const size = attr.substr_offsets[i + 1] - off;
+            const attr_text = attr.text + off;
+            const data = attr_text[0..size];
+
+            switch (type_val) {
+                c.MD_TEXT_NULLCHAR => try self.renderUtf8Codepoint(0),
+                c.MD_TEXT_ENTITY => try self.renderEntity(data),
+                c.MD_TEXT_NORMAL => {
+                    // For attributes, we need to escape quotes and ampersands
+                    var j: usize = 0;
+                    var start: usize = 0;
+
+                    while (j < data.len) {
+                        if (data[j] == '"' or data[j] == '&') {
+                            // Write the part before the character that needs escaping
+                            if (j > start) try self.write(data[start..j]);
+
+                            // Write the escaped character
+                            if (data[j] == '"') try self.write("&quot;") else try self.write("&amp;");
+
+                            start = j + 1;
+                        }
+                        j += 1;
+                    }
+
+                    // Write the remaining part
+                    if (start < data.len) try self.write(data[start..]);
+                },
+                else => try self.write(data),
+            }
+        }
+    }
 };
 
 fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
@@ -37,28 +204,99 @@ fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) 
         "<h6>",
     };
 
-    const tag = switch (blk) {
-        c.MD_BLOCK_QUOTE => "<blockquote>\n",
-        c.MD_BLOCK_UL => "<ul>\n",
-        c.MD_BLOCK_OL => "<ol>\n",
-        c.MD_BLOCK_LI => "<li>\n",
-        c.MD_BLOCK_HR => "<hr>\n",
-        c.MD_BLOCK_H => blk: {
-            const level = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail))).level;
-            break :blk headers_openning_tags[level - 1];
+    switch (blk) {
+        c.MD_BLOCK_DOC => {},
+        c.MD_BLOCK_QUOTE => ctx.write("<blockquote>\n") catch return 1,
+        c.MD_BLOCK_UL => ctx.write("<ul>\n") catch return 1,
+        c.MD_BLOCK_OL => {
+            const ol_detail = @as(*const c.MD_BLOCK_OL_DETAIL, @ptrCast(@alignCast(detail)));
+            if (ol_detail.start == 1) {
+                ctx.write("<ol>\n") catch return 1;
+            } else {
+                var buf: [32]u8 = undefined;
+                const start_attr = std.fmt.bufPrint(&buf, "<ol start=\"{d}\">\n", .{ol_detail.start}) catch return 1;
+                ctx.write(start_attr) catch return 1;
+            }
         },
-        c.MD_BLOCK_CODE => "<pre>\n<code>\n",
-        c.MD_BLOCK_P => "<p>\n",
-        c.MD_BLOCK_TABLE => "<table>\n",
-        c.MD_BLOCK_THEAD => "<thead>\n",
-        c.MD_BLOCK_TBODY => "<tbody>\n",
-        c.MD_BLOCK_TR => "<tr>\n",
-        c.MD_BLOCK_TH => "<th>",
-        c.MD_BLOCK_TD => "<td>",
-        else => "",
-    };
+        c.MD_BLOCK_LI => {
+            const li_detail = @as(*const c.MD_BLOCK_LI_DETAIL, @ptrCast(@alignCast(detail)));
+            if (li_detail.is_task != 0) {
+                ctx.write("<li class=\"task-list-item\"><input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled") catch return 1;
+                if (li_detail.task_mark == 'x' or li_detail.task_mark == 'X') {
+                    ctx.write(" checked") catch return 1;
+                }
+                ctx.write(">") catch return 1;
+            } else {
+                ctx.write("<li>") catch return 1;
+            }
+        },
+        c.MD_BLOCK_HR => ctx.write("<hr>\n") catch return 1,
+        c.MD_BLOCK_H => {
+            const h_detail = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail)));
+            const level = h_detail.level;
+            if (level >= 1 and level <= 6) {
+                ctx.write(headers_openning_tags[level - 1]) catch return 1;
+            }
+        },
+        c.MD_BLOCK_CODE => {
+            const code_detail = @as(*const c.MD_BLOCK_CODE_DETAIL, @ptrCast(@alignCast(detail)));
+            ctx.write("<pre><code") catch return 1;
 
-    ctx.buf.appendSlice(tag) catch return 1;
+            if (code_detail.lang.text != null and code_detail.lang.size > 0) {
+                ctx.write(" class=\"language-") catch return 1;
+                ctx.renderHtmlEscaped(code_detail.lang.text[0..code_detail.lang.size]) catch return 1;
+                ctx.write("\"") catch return 1;
+            }
+
+            ctx.write(">\n") catch return 1;
+        },
+        c.MD_BLOCK_P => ctx.write("<p>") catch return 1,
+        c.MD_BLOCK_TABLE => ctx.write("<table>\n") catch return 1,
+        c.MD_BLOCK_THEAD => ctx.write("<thead>\n") catch return 1,
+        c.MD_BLOCK_TBODY => ctx.write("<tbody>\n") catch return 1,
+        c.MD_BLOCK_TR => ctx.write("<tr>\n") catch return 1,
+        c.MD_BLOCK_TH => {
+            const header_detail = @as(*const c.MD_BLOCK_TD_DETAIL, @ptrCast(@alignCast(detail)));
+            ctx.write("<th") catch return 1;
+
+            const alignment = @field(header_detail, "align");
+            if (alignment != c.MD_ALIGN_DEFAULT) {
+                ctx.write(" align=\"") catch return 1;
+
+                switch (alignment) {
+                    c.MD_ALIGN_LEFT => ctx.write("left") catch return 1,
+                    c.MD_ALIGN_CENTER => ctx.write("center") catch return 1,
+                    c.MD_ALIGN_RIGHT => ctx.write("right") catch return 1,
+                    else => {},
+                }
+
+                ctx.write("\"") catch return 1;
+            }
+
+            ctx.write(">") catch return 1;
+        },
+        c.MD_BLOCK_TD => {
+            const cell_detail = @as(*const c.MD_BLOCK_TD_DETAIL, @ptrCast(@alignCast(detail)));
+            ctx.write("<td") catch return 1;
+
+            const alignment = @field(cell_detail, "align");
+            if (alignment != c.MD_ALIGN_DEFAULT) {
+                ctx.write(" align=\"") catch return 1;
+
+                switch (alignment) {
+                    c.MD_ALIGN_LEFT => ctx.write("left") catch return 1,
+                    c.MD_ALIGN_CENTER => ctx.write("center") catch return 1,
+                    c.MD_ALIGN_RIGHT => ctx.write("right") catch return 1,
+                    else => {},
+                }
+
+                ctx.write("\"") catch return 1;
+            }
+
+            ctx.write(">") catch return 1;
+        },
+        else => {},
+    }
 
     return 0;
 }
@@ -75,91 +313,118 @@ fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) 
         "</h6>\n",
     };
 
-    const tag = switch (blk) {
-        c.MD_BLOCK_QUOTE => "</blockquote>\n",
-        c.MD_BLOCK_UL => "</ul>\n",
-        c.MD_BLOCK_OL => "</ol>\n",
-        c.MD_BLOCK_LI => "</li>\n",
-        c.MD_BLOCK_H => blk: {
-            const level = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail))).level;
-            break :blk headers_closing_tags[level - 1];
+    switch (blk) {
+        c.MD_BLOCK_DOC => {},
+        c.MD_BLOCK_QUOTE => ctx.write("</blockquote>\n") catch return 1,
+        c.MD_BLOCK_UL => ctx.write("</ul>\n") catch return 1,
+        c.MD_BLOCK_OL => ctx.write("</ol>\n") catch return 1,
+        c.MD_BLOCK_LI => ctx.write("</li>\n") catch return 1,
+        c.MD_BLOCK_HR => {},
+        c.MD_BLOCK_H => {
+            const h_detail = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail)));
+            const level = h_detail.level;
+            if (level >= 1 and level <= 6) {
+                ctx.write(headers_closing_tags[level - 1]) catch return 1;
+            }
         },
-        c.MD_BLOCK_CODE => "</pre>\n</code>\n",
-        c.MD_BLOCK_P => "</p>\n",
-        c.MD_BLOCK_TABLE => "</table>\n",
-        c.MD_BLOCK_THEAD => "</thead>\n",
-        c.MD_BLOCK_TBODY => "</tbody>\n",
-        c.MD_BLOCK_TR => "</tr>\n",
-        c.MD_BLOCK_TH => "</th>\n",
-        c.MD_BLOCK_TD => "</td>\n",
-        else => "",
-    };
-
-    ctx.buf.appendSlice(tag) catch return 1;
+        c.MD_BLOCK_CODE => ctx.write("</code></pre>\n") catch return 1,
+        c.MD_BLOCK_P => ctx.write("</p>\n") catch return 1,
+        c.MD_BLOCK_TABLE => ctx.write("</table>\n") catch return 1,
+        c.MD_BLOCK_THEAD => ctx.write("</thead>\n") catch return 1,
+        c.MD_BLOCK_TBODY => ctx.write("</tbody>\n") catch return 1,
+        c.MD_BLOCK_TR => ctx.write("</tr>\n") catch return 1,
+        c.MD_BLOCK_TH => ctx.write("</th>\n") catch return 1,
+        c.MD_BLOCK_TD => ctx.write("</td>\n") catch return 1,
+        else => {},
+    }
 
     return 0;
 }
 
-fn enter_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
+fn enter_span(span: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
     const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
 
-    // TODO: add support for span attributes
-    const tag = switch (blk) {
-        c.MD_SPAN_EM => "<em>",
-        c.MD_SPAN_STRONG => "<strong>",
-        c.MD_SPAN_U => "<u>",
+    switch (span) {
+        c.MD_SPAN_EM => ctx.write("<em>") catch return 1,
+        c.MD_SPAN_STRONG => ctx.write("<strong>") catch return 1,
         c.MD_SPAN_A => {
             const a_detail = @as(*const c.MD_SPAN_A_DETAIL, @ptrCast(@alignCast(detail)));
-            ctx.buf.appendSlice("<a href=\"") catch return 1;
-            ctx.buf.appendSlice(a_detail.href.text[0..a_detail.href.size]) catch return 1;
-            ctx.buf.appendSlice("\">") catch return 1;
+            ctx.write("<a href=\"") catch return 1;
+            ctx.renderUrlEscaped(a_detail.href.text[0..a_detail.href.size]) catch return 1;
 
-            return 0;
+            if (a_detail.title.text != null and a_detail.title.size > 0) {
+                ctx.write("\" title=\"") catch return 1;
+                ctx.renderHtmlEscaped(a_detail.title.text[0..a_detail.title.size]) catch return 1;
+            }
+
+            ctx.write("\">") catch return 1;
         },
-        c.MD_SPAN_IMG => "<img>",
-        c.MD_SPAN_CODE => "<code>",
-        c.MD_SPAN_DEL => "<del>",
-        c.MD_SPAN_LATEXMATH => "<x-equation>",
-        c.MD_SPAN_LATEXMATH_DISPLAY => "<x-equation type=\"display\">",
-        c.MD_SPAN_WIKILINK => "<a>",
-        else => "---",
-    };
-    ctx.buf.appendSlice(tag) catch return 1;
+        c.MD_SPAN_IMG => {
+            ctx.image_nesting_level += 1;
+
+            const img_detail = @as(*const c.MD_SPAN_IMG_DETAIL, @ptrCast(@alignCast(detail)));
+            ctx.write("<img src=\"") catch return 1;
+            ctx.renderUrlEscaped(img_detail.src.text[0..img_detail.src.size]) catch return 1;
+
+            if (img_detail.title.text != null and img_detail.title.size > 0) {
+                ctx.write("\" title=\"") catch return 1;
+                ctx.renderHtmlEscaped(img_detail.title.text[0..img_detail.title.size]) catch return 1;
+            }
+
+            ctx.write("\" alt=\"") catch return 1;
+        },
+        c.MD_SPAN_CODE => ctx.write("<code>") catch return 1,
+        c.MD_SPAN_DEL => ctx.write("<del>") catch return 1,
+        c.MD_SPAN_U => ctx.write("<u>") catch return 1,
+        c.MD_SPAN_LATEXMATH => ctx.write("<x-equation>") catch return 1,
+        c.MD_SPAN_LATEXMATH_DISPLAY => ctx.write("<x-equation type=\"display\">") catch return 1,
+        c.MD_SPAN_WIKILINK => {
+            const wikilink_detail = @as(*const c.MD_SPAN_WIKILINK_DETAIL, @ptrCast(@alignCast(detail)));
+            ctx.write("<a href=\"") catch return 1;
+            ctx.renderUrlEscaped(wikilink_detail.target.text[0..wikilink_detail.target.size]) catch return 1;
+            ctx.write("\">") catch return 1;
+        },
+        else => {},
+    }
 
     return 0;
 }
 
-fn leave_span(blk: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
+fn leave_span(span: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
     const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
-    _ = detail; // autofix
+    _ = detail;
 
-    // TODO: add support for span attributes
-    const tag = switch (blk) {
-        c.MD_SPAN_EM => "</em>",
-        c.MD_SPAN_STRONG => "</strong>",
-        c.MD_SPAN_U => "</u>",
-        c.MD_SPAN_A => "</a>",
-        c.MD_SPAN_IMG => "</img>",
-        c.MD_SPAN_CODE => "</code>",
-        c.MD_SPAN_DEL => "</del>",
-        c.MD_SPAN_LATEXMATH => "</x-equation>",
-        c.MD_SPAN_LATEXMATH_DISPLAY => "</x-equation type=\"display\">",
-        c.MD_SPAN_WIKILINK => "</a>",
-        else => "---",
-    };
-
-    ctx.buf.appendSlice(tag) catch return 1;
+    switch (span) {
+        c.MD_SPAN_EM => ctx.write("</em>") catch return 1,
+        c.MD_SPAN_STRONG => ctx.write("</strong>") catch return 1,
+        c.MD_SPAN_A => ctx.write("</a>") catch return 1,
+        c.MD_SPAN_IMG => {
+            ctx.write("\"") catch return 1;
+            ctx.write(">") catch return 1;
+            ctx.image_nesting_level -= 1;
+        },
+        c.MD_SPAN_CODE => ctx.write("</code>") catch return 1,
+        c.MD_SPAN_DEL => ctx.write("</del>") catch return 1,
+        c.MD_SPAN_U => ctx.write("</u>") catch return 1,
+        c.MD_SPAN_LATEXMATH => ctx.write("</x-equation>") catch return 1,
+        c.MD_SPAN_LATEXMATH_DISPLAY => ctx.write("</x-equation>") catch return 1,
+        c.MD_SPAN_WIKILINK => ctx.write("</a>") catch return 1,
+        else => {},
+    }
 
     return 0;
 }
 
-fn text(blk: c.MD_TEXTTYPE, char: [*c]const c.MD_CHAR, size: c.MD_SIZE, userdata: ?*anyopaque) callconv(.C) c_int {
+fn text(type_val: c.MD_TEXTTYPE, text_data: [*c]const c.MD_CHAR, size: c.MD_SIZE, userdata: ?*anyopaque) callconv(.C) c_int {
     const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
-    const slice = char[0..size];
+    const data = text_data[0..size];
 
-    // TODO: handle text type
-    _ = blk;
-    ctx.buf.appendSlice(slice) catch return 1;
+    // Skip image alt text rendering when inside an image, as it's handled separately
+    if (ctx.image_nesting_level > 0 and type_val != c.MD_TEXT_NULLCHAR) {
+        return 0;
+    }
+
+    ctx.renderText(type_val, data) catch return 1;
     return 0;
 }
 
@@ -170,7 +435,7 @@ fn processFile(file: std.fs.File, parser: *const c.MD_PARSER, ctx: *RenderContex
     const bytes_read = try file.readAll(buf);
     var yaml_end: usize = 0;
 
-    // Cutting out YAML
+    // Cutting out YAML frontmatter
     if (std.mem.startsWith(u8, buf, "---\n")) {
         var i: usize = 4;
         while (i < buf.len - 3) {
@@ -180,9 +445,26 @@ fn processFile(file: std.fs.File, parser: *const c.MD_PARSER, ctx: *RenderContex
     }
 
     if (yaml_end != 0) print("YAML found [0..{d}]\n", .{yaml_end});
+
+    // Parse the markdown content
     _ = c.md_parse(@ptrCast(&buf[yaml_end]), @intCast(bytes_read - yaml_end), parser, ctx);
+    defer ctx.allocator.free(buf);
     defer file.close();
 }
+
+// Default template
+const html_head_open =
+    \\<!DOCTYPE html>
+    \\<html>
+    \\  <head>
+    \\    <meta name="generator" content="topaz">
+    \\    <meta charset="UTF-8">
+    \\
+;
+
+const html_head_close = "\n</head>\n";
+const html_body_open = "  <body>\n";
+const html_body_close = "  </body>\n</html>\n";
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -194,7 +476,6 @@ pub fn main() !void {
     var dest_dir_path_len: usize = default_dest.len;
     @memcpy(dest_dir_path[0..default_dest.len], default_dest);
 
-    // User arguments - support only one input path or current directory if none provided
     var input_path: []const u8 = "."; // Default to current directory
 
     const args = try std.process.argsAlloc(allocator);
@@ -240,7 +521,12 @@ pub fn main() !void {
 
     const parser = c.MD_PARSER{
         .abi_version = 0,
-        .flags = c.MD_FLAG_TABLES | c.MD_FLAG_TASKLISTS | c.MD_FLAG_WIKILINKS | c.MD_FLAG_LATEXMATHSPANS | c.MD_FLAG_PERMISSIVEAUTOLINKS | c.MD_FLAG_STRIKETHROUGH,
+        .flags = c.MD_FLAG_TABLES |
+            c.MD_FLAG_TASKLISTS |
+            c.MD_FLAG_WIKILINKS |
+            c.MD_FLAG_LATEXMATHSPANS |
+            c.MD_FLAG_PERMISSIVEAUTOLINKS |
+            c.MD_FLAG_STRIKETHROUGH,
         .enter_block = enter_block,
         .leave_block = leave_block,
         .enter_span = enter_span,
@@ -260,7 +546,6 @@ pub fn main() !void {
     print("Out dir is \"{s}\"\n", .{dest_dir_path[0..dest_dir_path_len]});
     try std.fs.cwd().makePath(dest_dir);
 
-    // Process input items
     var iter = input_files.iterator();
     while (iter.next()) |entry| {
         const file_path = entry.key_ptr.*;
@@ -270,7 +555,6 @@ pub fn main() !void {
         const file_stat = try file.stat();
 
         const dir_part = std.fs.path.dirname(relative_path) orelse "";
-
         const dest_dir_full = if (dir_part.len > 0)
             try std.fs.path.join(allocator, &[_][]const u8{ dest_dir_path[0..dest_dir_path_len], dir_part })
         else
@@ -281,7 +565,6 @@ pub fn main() !void {
         const page_name = std.fs.path.stem(std.fs.path.basename(relative_path));
         const html_filename = try std.fmt.allocPrint(allocator, "{s}.html", .{page_name});
 
-        // Create full destination path
         const dest_path = try std.fs.path.join(allocator, &[_][]const u8{ dest_dir_full, html_filename });
         const dest_file = try std.fs.cwd().createFile(dest_path, .{});
         defer dest_file.close();
@@ -289,20 +572,20 @@ pub fn main() !void {
         var out_buf = std.ArrayList(u8).init(allocator);
         defer out_buf.deinit();
 
-        var ctx = RenderContext{
-            .buf = &out_buf,
-            .allocator = allocator,
-            .page_title = page_name,
-        };
+        var ctx = RenderContext.init(&out_buf, allocator, page_name);
 
         try out_buf.appendSlice(html_head_open);
+        try out_buf.appendSlice("<title>");
+        try out_buf.appendSlice(page_name);
+        try out_buf.appendSlice("</title>");
         try out_buf.appendSlice(html_head_close);
         try out_buf.appendSlice(html_body_open);
 
         try processFile(file, &parser, &ctx);
         try out_buf.appendSlice(html_body_close);
-        try out_buf.append('\n');
+
         print("Processing {s} ({d}b)-> {s} ({d}b)...\n\n", .{ file_path, file_stat.size, dest_path, out_buf.items.len * @sizeOf(u8) });
+
         const fw = dest_file.writer();
         _ = try fw.writeAll(out_buf.items);
     }
