@@ -8,27 +8,31 @@ draft: true
 
 # Heading 1
 
+Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim
+labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi
+anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est
+aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia
+
+Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim
+labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi
+anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est
+aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia
+
 ## Heading 2
+
+Привет!
 
 ### Heading 3
 
+你好！
+
 #### Heading 4
+
+Olá!
 
 ##### Heading 5
 
 ###### Heading 6
-
-Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim
-labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi
-anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est
-aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia
-
-Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim
-labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi
-anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est
-aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia
-
----
 
 pariatur ut officia. Sit irure elit esse ea nulla sunt ex occaecat reprehenderit
 commodo officia dolor Lorem duis laboris cupidatat officia voluptate. Culpa
@@ -45,6 +49,13 @@ duis.
 > Earum laboriosam asperiores omnis molestiae veritatis Nostrum doloribus cumque
 > rerum omnis ut, dolorem sed. Nemo molestias cum deserunt placeat accusamus?
 > Error molestiae
+
+## Basic Formatting
+
+This is **bold text** and this is *italic text*.
+This is ***bold and italic text***.
+This is `inline code` and [this is a link](https://example.com).
+This is ~~strikethrough text~~.
 
 ## Lists
 
@@ -99,6 +110,13 @@ function foo() {
 <Component foo="bar" />;
 ```
 
+## Tables
+
+| Header 1 | Header 2 | Header 3 |
+|----------|:--------:|---------:|
+| Left     | Center   | Right    |
+| Cell     | Cell     | Cell     |
+
 ## Inputs
 
 To proceed click:
@@ -111,3 +129,21 @@ To proceed click:
 <input type="checkbox">
 <input type="checkbox" checked>
 <input type="checkbox" checked disabled>
+
+## Footnotes
+
+Here's a sentence with a footnote.[^1]
+
+[^1]: This is the footnote.
+
+## LaTeX Math
+
+Inline math: $E = mc^2$
+
+Display math:
+
+$$
+\frac{d}{dx}e^x = e^x
+$$
+
+That's it!
