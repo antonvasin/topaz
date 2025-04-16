@@ -1,10 +1,9 @@
 # TODO
 
-- Note
+- Idea/Note
 - [ ] TODO
 - [x] Done
 - [-] Cancelled
-- Idea/note
 
 ## 2024
 
@@ -23,6 +22,7 @@
 - [ ] Add tests for Obsidian vault
 - SPA navigation
 - Components/frameworks support
+- [ ] Versioning
 - [ ] Fetch content from git repo
 - Generate changelog from git
 
@@ -44,4 +44,4 @@
 
 ## 2025-03-12
 
-- Pin current pages version
+- [ ] Pin current pages version
