@@ -5,16 +5,47 @@ const c = @cImport({
 });
 
 const print = std.debug.print;
+const mem = std.mem;
 
 const RenderContext = struct {
-    buf: *std.ArrayList(u8),
-    allocator: std.mem.Allocator,
-    page_title: []const u8 = "",
+    allocator: mem.Allocator,
+    /// String builder
+    buf: std.ArrayList(u8),
+    page_title: []const u8,
     image_nesting_level: u32 = 0,
+
+    pub fn init(allocator: mem.Allocator, page_title: []const u8) !RenderContext {
+        const buf = std.ArrayList(u8).init(allocator);
+
+        return .{
+            .buf = buf,
+            .allocator = allocator,
+            .page_title = page_title,
+        };
+    }
+
+    pub fn deinit(self: *RenderContext) void {
+        self.buf.deinit();
+    }
 
     // TODO: return status code for md4c callbacks to avoid typing `catch return 1`
     pub fn write(self: *RenderContext, str: []const u8) !void {
         try self.buf.appendSlice(str);
+    }
+
+    /// Writes title and meta, run before md parsing
+    pub fn writeHtmlHead(self: *RenderContext) !void {
+        try self.write(html_head_open);
+        try self.write("<title>");
+        try self.write(self.page_title);
+        try self.write("</title>");
+        try self.write(html_head_close);
+        try self.write(html_body_open);
+    }
+
+    /// Closes tags, run after md parsing
+    pub fn writeHtmlTail(self: *RenderContext) !void {
+        try self.write(html_body_close);
     }
 
     pub fn renderText(self: *RenderContext, text_type: c.MD_TEXTTYPE, data: []const u8) !void {
@@ -413,10 +444,11 @@ fn processFile(file: std.fs.File, parser: *const c.MD_PARSER, ctx: *RenderContex
     var yaml_end: usize = 0;
 
     // Cutting out YAML frontmatter
-    if (std.mem.startsWith(u8, buf, "---\n")) {
+    if (mem.startsWith(u8, buf, "---\n")) {
         var i: usize = 4;
         while (i < buf.len - 3) {
-            if (std.mem.eql(u8, buf[i .. i + 4], "\n---")) yaml_end = i + 4;
+            // TODO: distinguish between YAML terminators and <hr />
+            if (mem.eql(u8, buf[i .. i + 4], "\n---")) yaml_end = i + 4;
             i += 1;
         }
     }
@@ -460,12 +492,12 @@ pub fn main() !void {
     // must use '='. The first non-flag argument is treated as input source.
     var found_input = false;
     for (args[1..]) |arg| {
-        if (!std.mem.startsWith(u8, arg, "--")) {
+        if (!mem.startsWith(u8, arg, "--")) {
             if (!found_input) {
                 input_path = arg;
                 found_input = true;
             }
-        } else if (std.mem.startsWith(u8, arg, "--out=")) {
+        } else if (mem.startsWith(u8, arg, "--out=")) {
             dest_dir_path_len = arg.len - 6;
             @memcpy(dest_dir_path[0..dest_dir_path_len], arg[6..]);
         }
@@ -485,14 +517,14 @@ pub fn main() !void {
         var walker = try dir.walk(allocator);
 
         while (try walker.next()) |entry| {
-            if (entry.kind == .file and std.mem.eql(u8, std.fs.path.extension(entry.basename), ".md")) {
+            if (entry.kind == .file and mem.eql(u8, std.fs.path.extension(entry.basename), ".md")) {
                 const full_path = try std.fs.path.join(allocator, &[_][]const u8{ input_path_absolute, entry.path });
                 const rel_path = try allocator.dupe(u8, entry.path);
                 try input_files.put(full_path, rel_path);
             }
         }
         // Collect individual files
-    } else if (stat.kind == .file and std.mem.eql(u8, std.fs.path.extension(input_path_absolute), ".md")) {
+    } else if (stat.kind == .file and mem.eql(u8, std.fs.path.extension(input_path_absolute), ".md")) {
         try input_files.put(input_path_absolute, std.fs.path.basename(input_path_absolute));
     }
 
@@ -546,25 +578,18 @@ pub fn main() !void {
         const dest_file = try std.fs.cwd().createFile(dest_path, .{});
         defer dest_file.close();
 
-        var out_buf = std.ArrayList(u8).init(allocator);
-        defer out_buf.deinit();
+        var ctx = try RenderContext.init(allocator, page_name);
+        defer ctx.deinit();
 
-        var ctx = RenderContext{ .buf = &out_buf, .allocator = allocator, .page_title = page_name };
-
-        try out_buf.appendSlice(html_head_open);
-        try out_buf.appendSlice("<title>");
-        try out_buf.appendSlice(page_name);
-        try out_buf.appendSlice("</title>");
-        try out_buf.appendSlice(html_head_close);
-        try out_buf.appendSlice(html_body_open);
-
+        // Render HTMl
+        try ctx.writeHtmlHead();
         try processFile(file, &parser, &ctx);
-        try out_buf.appendSlice(html_body_close);
+        try ctx.writeHtmlTail();
 
-        print("Processing {s} ({d}b)-> {s} ({d}b)...\n\n", .{ file_path, file_stat.size, dest_path, out_buf.items.len * @sizeOf(u8) });
+        print("Processing {s} ({d}b)-> {s} ({d}b)...\n\n", .{ file_path, file_stat.size, dest_path, ctx.buf.items.len * @sizeOf(u8) });
 
         const fw = dest_file.writer();
-        _ = try fw.writeAll(out_buf.items);
+        _ = try fw.writeAll(ctx.buf.items);
     }
 }
 
@@ -578,5 +603,5 @@ pub fn main() !void {
 // test "fuzz example" {
 //     // Try passing `--fuzz` to `zig build` and see if it manages to fail this test case!
 //     const input_bytes = std.testing.fuzzInput(.{});
-//     try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input_bytes));
+//     try std.testing.expect(!mem.eql(u8, "canyoufindme", input_bytes));
 // }
