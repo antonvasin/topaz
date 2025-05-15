@@ -7,19 +7,17 @@
 - `zig build run -- test` to build and run with the `test` folder as input. Default output is `topaz-out`.
 
 ## Code Style Guidelines
-- **Naming**: Follow idiomatic Zig coding style
-- **Imports**: Group standard library first, then external imports
-- **Error handling**: Use Zig's `try/catch` pattern
-- **Memory management**: Use single `ArenaAllocator` for allocations, close resources once with single `defer` at the end of `main`
-- **C interop**: app uses `md4c` C library via zig C-interop
-- Do not write any comments unless asked to!
+- **Naming**: use snake_case for variables, PascalCase for types/structs and camelCase for callables.
+- **Imports**: Group standard library first, then external imports.
+- **Error handling**: Use Zig's `try/catch` pattern.
+- **Memory management**: Use single `ArenaAllocator` for allocations, close resources once with single `defer` at the end of `main`.
+- **C interop**: app uses `md4c` C library via zig C-interop.
+- Do not rename variables or functions.
+- Do not write any comments.
 - Write minimal amount of code to solve the problem. Avoid unnecessary variables.
-- Do not extract code into functions unless it is written at least 3 times.
-- Do not rename variables and functions.
 
 ## Project Information
-- Indexer and static site generator that converts markdown notes into HTML websistes
-- Supports Obsidian notes and GitHub Flavored Markdown
-- Processes both individual files and directories, linking only what's in the current graph
-- Indexes markdown and it's frontmatter for tags, backlinks, table of contents, header anchors, links, footnotes and similar meta-information
-- Each note/page can has it's own template, js and css via frontmatter attrbiutes making it a micro-site
+- Markdown-HTML static site generator with support for Obisidian vaults and wiki-style notes.
+- Indexes notes for backlinks, meta-info, header- and paragraph-level internal links to support graph-like knowledge management (PKM) notes.
+- Distributes as single binary with no runtime dependencies and produces static HTML+JS+CSS website with support for templates and custom JS and CSS via Frontmatter.
+- Produces sites with enhanced SPA-like client code for self-hosting personal websites, docs and wiki-style knowledge bases.

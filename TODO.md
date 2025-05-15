@@ -1,51 +1,45 @@
 # TODO
 
-- Idea/Note
-- [ ] TODO
-- [x] Done
-- [-] Cancelled
+## Markdown parsing
 
-## 2024
-
-- [x] Implement basic HTML renderer
-- [ ] Read and parse frontmatter, probably with [zig-yaml](https://github.com/kubkon/zig-yaml/)
-- [ ] Filter out empty and drafts/private notes
 - [x] Integrate [`md4c`](https://github.com/mity/md4c)
 - [ ] Generate slugs for URLs and headers
 - [ ] Process Wiki-style links
-- [ ] Generate Table of Contents for single page
-- [ ] Collect backlinks
+- [ ] Add tests for [Git book](https://github.com/progit/progit/tree/master/en)
+- [ ] Add tests for Obsidian vault
+
+## HTML
+
+- [x] Implement basic HTML renderer
 - [ ] Implement templating
 - [ ] Bundle JS & CSS (get dep graph, dedupe, bundle with esbuild)
 - [ ] Copy linked images/files to `/public`
-- [ ] Add tests for [Git book](https://github.com/progit/progit/tree/master/en)
-- [ ] Add tests for Obsidian vault
-- SPA navigation
-- Components/frameworks support
-- [ ] Versioning
-- [ ] Fetch content from git repo
-- Generate changelog from git
-
-## 2025-02-05
-
-- [x] Pass sources via args
+- [ ] Enhanced client-side navigation, prefetching
+- [ ] Web Components/frameworks support
 - [ ] Replace reserved chars with HTML entities
-- [x] Pass output dir via args
-
-## 2025-02-07
-
-- [ ] Generate chronological Archive/All posts info
-
-## 2025-02-21
-
 - [ ] Render formulas with [KaTeX](https://github.com/KaTeX/KaTeX)
 - [ ] Write basic tests for md-html conversion
 - [ ] Pretty print HTML
 
-## 2025-03-12
+## Sources/Indexing
 
+- [ ] Fetch content from git repo
+- [ ] Versioning
+- [ ] Generate chronological Archive/All posts info
 - [ ] Pin current pages version
-
-## 2025-04-16
-
 - [ ] Generate RSS feed
+- [ ] Collect backlinks
+- [ ] Generate Table of Contents for single page
+- [ ] Hash/diff individual paragraphs
+
+## Metadata
+
+- [ ] Read and parse frontmatter, probably with [zig-yaml](https://github.com/kubkon/zig-yaml/)
+- [ ] Filter out empty and drafts/private notes
+- [ ] Created/last edited at timestamps
+- [ ] Support `alias`
+
+## CLI
+
+- [x] Pass sources via args
+- [x] Pass output dir via args
