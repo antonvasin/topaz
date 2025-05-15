@@ -6,6 +6,9 @@ const c = @cImport({
 
 const print = std.debug.print;
 const mem = std.mem;
+const assert = std.debug.assert;
+
+// Default template
 
 const RenderContext = struct {
     allocator: mem.Allocator,
@@ -13,6 +16,7 @@ const RenderContext = struct {
     buf: std.ArrayList(u8),
     page_title: []const u8,
     image_nesting_level: u32 = 0,
+    current_level: u32 = 0,
 
     pub fn init(allocator: mem.Allocator, page_title: []const u8) !RenderContext {
         const buf = std.ArrayList(u8).init(allocator);
@@ -29,23 +33,61 @@ const RenderContext = struct {
     }
 
     // TODO: return status code for md4c callbacks to avoid typing `catch return 1`
+    /// Print string inline (no indentation)
     pub fn write(self: *RenderContext, str: []const u8) !void {
         try self.buf.appendSlice(str);
     }
 
+    /// Print tag inline without nesting e.g. `        <title>Title</title>\n`
+    pub fn writeInline(self: *RenderContext, str: []const u8) !void {
+        for (0..self.current_level) |_| try self.write("    ");
+        try self.write(str);
+        try self.write("\n");
+    }
+
+    /// Print open tag with indentation
+    pub fn writeOpen(self: *RenderContext, str: []const u8) !void {
+        for (0..self.current_level) |_| try self.write("    ");
+        try self.write(str);
+        try self.write("\n");
+        self.current_level += 1;
+    }
+
+    // Print closing tag with indentation
+    pub fn writeClose(self: *RenderContext, str: []const u8) !void {
+        // assert(self.current_level > 0);
+        if (self.current_level > 0) self.current_level -= 1 else print("Lost indentation {s}\n", .{str});
+        for (0..self.current_level) |_| try self.write("    ");
+        try self.write(str);
+        try self.write("\n");
+    }
+
     /// Writes title and meta, run before md parsing
     pub fn writeHtmlHead(self: *RenderContext) !void {
+        const html_head_open =
+            \\<!DOCTYPE html>
+            \\<html>
+            \\    <head>
+            \\        <meta name="generator" content="topaz">
+            \\        <meta charset="UTF-8">
+            \\
+        ;
+
         try self.write(html_head_open);
-        try self.write("<title>");
-        try self.write(self.page_title);
-        try self.write("</title>");
-        try self.write(html_head_close);
-        try self.write(html_body_open);
+        self.current_level = 2;
+
+        var title_buf: [1024]u8 = undefined;
+        const title = try std.fmt.bufPrint(&title_buf, "<title>{s}</title>", .{self.page_title});
+        try self.writeInline(title);
+
+        try self.writeClose("</head>");
+        try self.writeOpen("<body>");
     }
 
     /// Closes tags, run after md parsing
     pub fn writeHtmlTail(self: *RenderContext) !void {
-        try self.write(html_body_close);
+        try self.writeClose("</body>");
+        try self.writeClose("</html>");
     }
 
     pub fn renderText(self: *RenderContext, text_type: c.MD_TEXTTYPE, data: []const u8) !void {
@@ -214,41 +256,42 @@ fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) 
 
     switch (blk) {
         c.MD_BLOCK_DOC => {},
-        c.MD_BLOCK_QUOTE => ctx.write("<blockquote>\n") catch return 1,
-        c.MD_BLOCK_UL => ctx.write("<ul>\n") catch return 1,
+        c.MD_BLOCK_QUOTE => ctx.writeOpen("<blockquote>") catch return 1,
+        c.MD_BLOCK_UL => ctx.writeOpen("<ul>") catch return 1,
         c.MD_BLOCK_OL => {
             const ol_detail = @as(*const c.MD_BLOCK_OL_DETAIL, @ptrCast(@alignCast(detail)));
             if (ol_detail.start == 1) {
-                ctx.write("<ol>\n") catch return 1;
+                ctx.writeOpen("<ol>") catch return 1;
             } else {
                 var buf: [32]u8 = undefined;
-                const start_attr = std.fmt.bufPrint(&buf, "<ol start=\"{d}\">\n", .{ol_detail.start}) catch return 1;
-                ctx.write(start_attr) catch return 1;
+                const ol_tag = std.fmt.bufPrint(&buf, "<ol start=\"{d}\">", .{ol_detail.start}) catch return 1;
+                ctx.writeOpen(ol_tag) catch return 1;
             }
         },
         c.MD_BLOCK_LI => {
             const li_detail = @as(*const c.MD_BLOCK_LI_DETAIL, @ptrCast(@alignCast(detail)));
             if (li_detail.is_task != 0) {
-                ctx.write("<li class=\"task-list-item\"><input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled") catch return 1;
-                if (li_detail.task_mark == 'x' or li_detail.task_mark == 'X') {
-                    ctx.write(" checked") catch return 1;
-                }
-                ctx.write(">") catch return 1;
+                // TODO: this really have no length limit
+                var ol_buf: [4096]u8 = undefined;
+                const checked: []const u8 = if (li_detail.task_mark == 'x' or li_detail.task_mark == 'X') "checked" else "";
+                const li_tag = std.fmt.bufPrint(&ol_buf, "<li class=\"task-list-item\"><input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled {s}>", .{checked}) catch return 1;
+                ctx.writeOpen(li_tag) catch return 1;
             } else {
-                ctx.write("<li>") catch return 1;
+                ctx.writeOpen("<li>") catch return 1;
             }
         },
-        c.MD_BLOCK_HR => ctx.write("<hr>\n") catch return 1,
+        c.MD_BLOCK_HR => ctx.writeInline("<hr>") catch return 1,
         c.MD_BLOCK_H => {
             const h_detail = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail)));
             const level = h_detail.level;
             if (level >= 1 and level <= 6) {
-                ctx.write(headers_openning_tags[level - 1]) catch return 1;
+                ctx.writeOpen(headers_openning_tags[level - 1]) catch return 1;
             }
         },
         c.MD_BLOCK_CODE => {
             const code_detail = @as(*const c.MD_BLOCK_CODE_DETAIL, @ptrCast(@alignCast(detail)));
-            ctx.write("<pre><code") catch return 1;
+            ctx.writeOpen("<pre>") catch return 1;
+            ctx.writeInline("<code") catch return 1;
 
             if (code_detail.lang.text != null and code_detail.lang.size > 0) {
                 ctx.write(" class=\"language-") catch return 1;
@@ -257,15 +300,17 @@ fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) 
             }
 
             ctx.write(">\n") catch return 1;
+            // TODO: handle in writer
+            ctx.current_level += 1;
         },
-        c.MD_BLOCK_P => ctx.write("<p>") catch return 1,
-        c.MD_BLOCK_TABLE => ctx.write("<table>\n") catch return 1,
-        c.MD_BLOCK_THEAD => ctx.write("<thead>\n") catch return 1,
-        c.MD_BLOCK_TBODY => ctx.write("<tbody>\n") catch return 1,
-        c.MD_BLOCK_TR => ctx.write("<tr>\n") catch return 1,
+        c.MD_BLOCK_P => ctx.writeOpen("<p>") catch return 1,
+        c.MD_BLOCK_TABLE => ctx.writeOpen("<table>") catch return 1,
+        c.MD_BLOCK_THEAD => ctx.writeOpen("<thead>") catch return 1,
+        c.MD_BLOCK_TBODY => ctx.writeOpen("<tbody>") catch return 1,
+        c.MD_BLOCK_TR => ctx.writeOpen("<tr>") catch return 1,
         c.MD_BLOCK_TH => {
             const header_detail = @as(*const c.MD_BLOCK_TD_DETAIL, @ptrCast(@alignCast(detail)));
-            ctx.write("<th") catch return 1;
+            ctx.writeInline("<th") catch return 1;
 
             const alignment = @field(header_detail, "align");
             if (alignment != c.MD_ALIGN_DEFAULT) {
@@ -281,11 +326,13 @@ fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) 
                 ctx.write("\"") catch return 1;
             }
 
-            ctx.write(">") catch return 1;
+            ctx.write(">\n") catch return 1;
+            // TODO: handle in writer
+            ctx.current_level += 1;
         },
         c.MD_BLOCK_TD => {
             const cell_detail = @as(*const c.MD_BLOCK_TD_DETAIL, @ptrCast(@alignCast(detail)));
-            ctx.write("<td") catch return 1;
+            ctx.writeInline("<td") catch return 1;
 
             const alignment = @field(cell_detail, "align");
             if (alignment != c.MD_ALIGN_DEFAULT) {
@@ -301,7 +348,8 @@ fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) 
                 ctx.write("\"") catch return 1;
             }
 
-            ctx.write(">") catch return 1;
+            ctx.write(">\n") catch return 1;
+            ctx.current_level += 1;
         },
         else => {},
     }
@@ -313,36 +361,39 @@ fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) 
     const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
 
     const headers_closing_tags: [6][]const u8 = .{
-        "</h1>\n",
-        "</h2>\n",
-        "</h3>\n",
-        "</h4>\n",
-        "</h5>\n",
-        "</h6>\n",
+        "</h1>",
+        "</h2>",
+        "</h3>",
+        "</h4>",
+        "</h5>",
+        "</h6>",
     };
 
     switch (blk) {
         c.MD_BLOCK_DOC => {},
-        c.MD_BLOCK_QUOTE => ctx.write("</blockquote>\n") catch return 1,
-        c.MD_BLOCK_UL => ctx.write("</ul>\n") catch return 1,
-        c.MD_BLOCK_OL => ctx.write("</ol>\n") catch return 1,
-        c.MD_BLOCK_LI => ctx.write("</li>\n") catch return 1,
+        c.MD_BLOCK_QUOTE => ctx.writeClose("</blockquote>") catch return 1,
+        c.MD_BLOCK_UL => ctx.writeClose("</ul>") catch return 1,
+        c.MD_BLOCK_OL => ctx.writeClose("</ol>") catch return 1,
+        c.MD_BLOCK_LI => ctx.writeClose("</li>") catch return 1,
         c.MD_BLOCK_HR => {},
         c.MD_BLOCK_H => {
             const h_detail = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail)));
             const level = h_detail.level;
             if (level >= 1 and level <= 6) {
-                ctx.write(headers_closing_tags[level - 1]) catch return 1;
+                ctx.writeClose(headers_closing_tags[level - 1]) catch return 1;
             }
         },
-        c.MD_BLOCK_CODE => ctx.write("</code></pre>\n") catch return 1,
-        c.MD_BLOCK_P => ctx.write("</p>\n") catch return 1,
-        c.MD_BLOCK_TABLE => ctx.write("</table>\n") catch return 1,
-        c.MD_BLOCK_THEAD => ctx.write("</thead>\n") catch return 1,
-        c.MD_BLOCK_TBODY => ctx.write("</tbody>\n") catch return 1,
-        c.MD_BLOCK_TR => ctx.write("</tr>\n") catch return 1,
-        c.MD_BLOCK_TH => ctx.write("</th>\n") catch return 1,
-        c.MD_BLOCK_TD => ctx.write("</td>\n") catch return 1,
+        c.MD_BLOCK_CODE => {
+            ctx.writeClose("</code>") catch return 1;
+            ctx.writeClose("</pre>\n") catch return 1;
+        },
+        c.MD_BLOCK_P => ctx.writeClose("</p>") catch return 1,
+        c.MD_BLOCK_TABLE => ctx.writeClose("</table>") catch return 1,
+        c.MD_BLOCK_THEAD => ctx.writeClose("</thead>") catch return 1,
+        c.MD_BLOCK_TBODY => ctx.writeClose("</tbody>") catch return 1,
+        c.MD_BLOCK_TR => ctx.writeClose("</tr>") catch return 1,
+        c.MD_BLOCK_TH => ctx.writeClose("</th>") catch return 1,
+        c.MD_BLOCK_TD => ctx.writeClose("</td>") catch return 1,
         else => {},
     }
 
@@ -461,20 +512,6 @@ fn processFile(file: std.fs.File, parser: *const c.MD_PARSER, ctx: *RenderContex
     defer file.close();
 }
 
-// Default template
-const html_head_open =
-    \\<!DOCTYPE html>
-    \\<html>
-    \\  <head>
-    \\    <meta name="generator" content="topaz">
-    \\    <meta charset="UTF-8">
-    \\
-;
-
-const html_head_close = "\n</head>\n";
-const html_body_open = "  <body>\n";
-const html_body_close = "  </body>\n</html>\n";
-
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const allocator = arena.allocator();
@@ -581,12 +618,12 @@ pub fn main() !void {
         var ctx = try RenderContext.init(allocator, page_name);
         defer ctx.deinit();
 
+        print("Processing {s} ({d}b)-> {s}\n", .{ file_path, file_stat.size, dest_path });
+
         // Render HTMl
         try ctx.writeHtmlHead();
         try processFile(file, &parser, &ctx);
         try ctx.writeHtmlTail();
-
-        print("Processing {s} ({d}b)-> {s} ({d}b)...\n\n", .{ file_path, file_stat.size, dest_path, ctx.buf.items.len * @sizeOf(u8) });
 
         const fw = dest_file.writer();
         _ = try fw.writeAll(ctx.buf.items);
