@@ -9,15 +9,9 @@
 ## Code Style Guidelines
 - **Naming**: use snake_case for variables, PascalCase for types/structs and camelCase for callables.
 - **Imports**: Group standard library first, then external imports.
-- **Error handling**: Use Zig's `try/catch` pattern.
-- **Memory management**: Use single `ArenaAllocator` for allocations, close resources once with single `defer` at the end of `main`.
+- **Error handling**: Use Zig's `try/catch` pattern. Avoid re-returning errors, instead handle user facing error in one place.
+- **Memory management**: This is CLI application, use single `ArenaAllocator` for allocations, close resources once with single `defer` at the end of `main`.
 - **C interop**: app uses `md4c` C library via zig C-interop.
-- Do not rename variables or functions.
-- Do not write any comments.
-- Write minimal amount of code to solve the problem. Avoid unnecessary variables.
-
-## Project Information
-- Markdown-HTML static site generator with support for Obisidian vaults and wiki-style notes.
-- Indexes notes for backlinks, meta-info, header- and paragraph-level internal links to support graph-like knowledge management (PKM) notes.
-- Distributes as single binary with no runtime dependencies and produces static HTML+JS+CSS website with support for templates and custom JS and CSS via Frontmatter.
-- Produces sites with enhanced SPA-like client code for self-hosting personal websites, docs and wiki-style knowledge bases.
+- Do not rename variables or functions when solving problems.
+- Do not write any comments unless explicitly asked to do so.
+- Prefer dense coding style. Avoid unnecessary variables.
