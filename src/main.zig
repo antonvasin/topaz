@@ -8,23 +8,35 @@ const print = std.debug.print;
 const mem = std.mem;
 const assert = std.debug.assert;
 
-// Default template
+const Page = struct {
+    path: []const u8,
+    meta: Meta,
 
+    // https://help.obsidian.md/properties
+    // https://help.obsidian.md/publish/seo#Metadata
+    // https://help.obsidian.md/publish/permalinks
+    // https://docs.github.com/en/contributing/writing-for-github-docs/using-yaml-frontmatter
+    const Meta = struct {
+        title: []const u8,
+        url: []const u8,
+        date: ?[]const u8 = null,
+        skip: bool = false,
+    };
+};
+
+/// Builds HTML string
 const RenderContext = struct {
     allocator: mem.Allocator,
-    /// String builder
     buf: std.ArrayList(u8),
-    page_title: []const u8,
     image_nesting_level: u32 = 0,
     current_level: u32 = 0,
 
-    pub fn init(allocator: mem.Allocator, page_title: []const u8) !RenderContext {
+    pub fn init(allocator: mem.Allocator) !RenderContext {
         const buf = std.ArrayList(u8).init(allocator);
 
         return .{
             .buf = buf,
             .allocator = allocator,
-            .page_title = page_title,
         };
     }
 
@@ -57,7 +69,7 @@ const RenderContext = struct {
         try self.write("\n");
     }
 
-    pub fn writeHtmlHead(self: *RenderContext) !void {
+    pub fn writeHtmlHead(self: *RenderContext, page_title: []const u8) !void {
         const html_head_open =
             \\<!DOCTYPE html>
             \\<html>
@@ -71,7 +83,7 @@ const RenderContext = struct {
         self.current_level = 2;
 
         var title_buf: [1024]u8 = undefined;
-        const title = try std.fmt.bufPrint(&title_buf, "<title>{s}</title>", .{self.page_title});
+        const title = try std.fmt.bufPrint(&title_buf, "<title>{s}</title>", .{page_title});
         try self.writeInline(title);
 
         try self.writeClose("</head>");
@@ -495,7 +507,7 @@ fn text_impl(type_val: c.MD_TEXTTYPE, text_data: [*c]const c.MD_CHAR, size: c.MD
     try ctx.renderText(type_val, data);
 }
 
-fn processFile(file: std.fs.File, parser: *const c.MD_PARSER, ctx: *RenderContext) !void {
+fn processFile(file: std.fs.File, name: []const u8, pages: *std.StringHashMap(Page), parser: *const c.MD_PARSER, ctx: *RenderContext) !void {
     const file_size = try file.getEndPos();
     var buf = try ctx.allocator.alloc(u8, file_size);
     errdefer ctx.allocator.free(buf);
@@ -514,8 +526,21 @@ fn processFile(file: std.fs.File, parser: *const c.MD_PARSER, ctx: *RenderContex
 
     if (yaml_end != 0) print("YAML found [0..{d}]\n", .{yaml_end});
 
+    const page = Page{
+        .path = name,
+        .meta = .{
+            .title = name,
+            .skip = false,
+            .url = name,
+        },
+    };
+
+    try pages.put(name, page);
+
     // Parse the markdown content
+    try ctx.writeHtmlHead(name);
     _ = c.md_parse(@ptrCast(&buf[yaml_end]), @intCast(bytes_read - yaml_end), parser, ctx);
+    try ctx.writeHtmlTail();
     defer ctx.allocator.free(buf);
     defer file.close();
 }
@@ -590,7 +615,7 @@ pub fn main() !void {
         .syntax = null,
     };
 
-    // Create the output directory
+    // Create output directory
     const dest_dir = std.fs.path.resolve(allocator, &[_][]const u8{dest_dir_path[0..dest_dir_path_len]}) catch |err| {
         print("Failed to resolve dest path: {any}\n", .{err});
         return err;
@@ -600,13 +625,13 @@ pub fn main() !void {
     print("Out dir is \"{s}\"\n", .{dest_dir_path[0..dest_dir_path_len]});
     try std.fs.cwd().makePath(dest_dir);
 
+    // Process files
+    var pages = std.StringHashMap(Page).init(allocator);
+
     var iter = input_files.iterator();
     while (iter.next()) |entry| {
         const file_path = entry.key_ptr.*;
         const relative_path = entry.value_ptr.*;
-
-        const file = try std.fs.cwd().openFile(file_path, .{});
-        const file_stat = try file.stat();
 
         const dir_part = std.fs.path.dirname(relative_path) orelse "";
         const dest_dir_full = if (dir_part.len > 0)
@@ -617,22 +642,19 @@ pub fn main() !void {
         try std.fs.cwd().makePath(dest_dir_full);
 
         const page_name = std.fs.path.stem(std.fs.path.basename(relative_path));
-        const html_filename = try std.fmt.allocPrint(allocator, "{s}.html", .{page_name});
-
-        const dest_path = try std.fs.path.join(allocator, &[_][]const u8{ dest_dir_full, html_filename });
-        const dest_file = try std.fs.cwd().createFile(dest_path, .{});
-        defer dest_file.close();
-
-        var ctx = try RenderContext.init(allocator, page_name);
-        defer ctx.deinit();
-
-        print("Processing {s} ({d}b)-> {s}\n", .{ file_path, file_stat.size, dest_path });
+        const dest_filename = try std.fmt.allocPrint(allocator, "{s}.html", .{page_name});
+        const dest_path = try std.fs.path.join(allocator, &[_][]const u8{ dest_dir_full, dest_filename });
 
         // Render HTMl
-        try ctx.writeHtmlHead();
-        try processFile(file, &parser, &ctx);
-        try ctx.writeHtmlTail();
+        var ctx = try RenderContext.init(allocator);
+        defer ctx.deinit();
+        const file = try std.fs.cwd().openFile(file_path, .{});
+        const file_stat = try file.stat();
+        print("Processing {s} ({d}b)-> {s}\n", .{ file_path, file_stat.size, dest_path });
+        try processFile(file, page_name, &pages, &parser, &ctx);
 
+        const dest_file = try std.fs.cwd().createFile(dest_path, .{});
+        defer dest_file.close();
         const fw = dest_file.writer();
         _ = try fw.writeAll(ctx.buf.items);
     }
