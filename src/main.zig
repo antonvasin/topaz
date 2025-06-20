@@ -32,20 +32,16 @@ const RenderContext = struct {
         self.buf.deinit();
     }
 
-    // TODO: return status code for md4c callbacks to avoid typing `catch return 1`
-    /// Print string inline (no indentation)
     pub fn write(self: *RenderContext, str: []const u8) !void {
         try self.buf.appendSlice(str);
     }
 
-    /// Print tag inline without nesting e.g. `        <title>Title</title>\n`
     pub fn writeInline(self: *RenderContext, str: []const u8) !void {
         for (0..self.current_level) |_| try self.write("    ");
         try self.write(str);
         try self.write("\n");
     }
 
-    /// Print open tag with indentation
     pub fn writeOpen(self: *RenderContext, str: []const u8) !void {
         for (0..self.current_level) |_| try self.write("    ");
         try self.write(str);
@@ -53,7 +49,6 @@ const RenderContext = struct {
         self.current_level += 1;
     }
 
-    // Print closing tag with indentation
     pub fn writeClose(self: *RenderContext, str: []const u8) !void {
         // assert(self.current_level > 0);
         if (self.current_level > 0) self.current_level -= 1 else print("Lost indentation {s}\n", .{str});
@@ -62,7 +57,6 @@ const RenderContext = struct {
         try self.write("\n");
     }
 
-    /// Writes title and meta, run before md parsing
     pub fn writeHtmlHead(self: *RenderContext) !void {
         const html_head_open =
             \\<!DOCTYPE html>
@@ -84,7 +78,6 @@ const RenderContext = struct {
         try self.writeOpen("<body>");
     }
 
-    /// Closes tags, run after md parsing
     pub fn writeHtmlTail(self: *RenderContext) !void {
         try self.writeClose("</body>");
         try self.writeClose("</html>");
@@ -244,7 +237,11 @@ const RenderContext = struct {
 
 fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
     const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
+    enter_block_impl(blk, detail, ctx) catch return 1;
+    return 0;
+}
 
+fn enter_block_impl(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, ctx: *RenderContext) !void {
     const headers_openning_tags: [6][]const u8 = .{
         "<h1>",
         "<h2>",
@@ -256,16 +253,16 @@ fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) 
 
     switch (blk) {
         c.MD_BLOCK_DOC => {},
-        c.MD_BLOCK_QUOTE => ctx.writeOpen("<blockquote>") catch return 1,
-        c.MD_BLOCK_UL => ctx.writeOpen("<ul>") catch return 1,
+        c.MD_BLOCK_QUOTE => try ctx.writeOpen("<blockquote>"),
+        c.MD_BLOCK_UL => try ctx.writeOpen("<ul>"),
         c.MD_BLOCK_OL => {
             const ol_detail = @as(*const c.MD_BLOCK_OL_DETAIL, @ptrCast(@alignCast(detail)));
             if (ol_detail.start == 1) {
-                ctx.writeOpen("<ol>") catch return 1;
+                try ctx.writeOpen("<ol>");
             } else {
                 var buf: [32]u8 = undefined;
-                const ol_tag = std.fmt.bufPrint(&buf, "<ol start=\"{d}\">", .{ol_detail.start}) catch return 1;
-                ctx.writeOpen(ol_tag) catch return 1;
+                const ol_tag = try std.fmt.bufPrint(&buf, "<ol start=\"{d}\">", .{ol_detail.start});
+                try ctx.writeOpen(ol_tag);
             }
         },
         c.MD_BLOCK_LI => {
@@ -274,92 +271,94 @@ fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) 
                 // TODO: this really have no length limit
                 var ol_buf: [4096]u8 = undefined;
                 const checked: []const u8 = if (li_detail.task_mark == 'x' or li_detail.task_mark == 'X') "checked" else "";
-                const li_tag = std.fmt.bufPrint(&ol_buf, "<li class=\"task-list-item\"><input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled {s}>", .{checked}) catch return 1;
-                ctx.writeOpen(li_tag) catch return 1;
+                const li_tag = try std.fmt.bufPrint(&ol_buf, "<li class=\"task-list-item\"><input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled {s}>", .{checked});
+                try ctx.writeOpen(li_tag);
             } else {
-                ctx.writeOpen("<li>") catch return 1;
+                try ctx.writeOpen("<li>");
             }
         },
-        c.MD_BLOCK_HR => ctx.writeInline("<hr>") catch return 1,
+        c.MD_BLOCK_HR => try ctx.writeInline("<hr>"),
         c.MD_BLOCK_H => {
             const h_detail = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail)));
             const level = h_detail.level;
             if (level >= 1 and level <= 6) {
-                ctx.writeOpen(headers_openning_tags[level - 1]) catch return 1;
+                try ctx.writeOpen(headers_openning_tags[level - 1]);
             }
         },
         c.MD_BLOCK_CODE => {
             const code_detail = @as(*const c.MD_BLOCK_CODE_DETAIL, @ptrCast(@alignCast(detail)));
-            ctx.writeOpen("<pre>") catch return 1;
-            ctx.writeInline("<code") catch return 1;
+            try ctx.writeOpen("<pre>");
+            try ctx.writeInline("<code");
 
             if (code_detail.lang.text != null and code_detail.lang.size > 0) {
-                ctx.write(" class=\"language-") catch return 1;
-                ctx.renderHtmlEscaped(code_detail.lang.text[0..code_detail.lang.size]) catch return 1;
-                ctx.write("\"") catch return 1;
+                try ctx.write(" class=\"language-");
+                try ctx.renderHtmlEscaped(code_detail.lang.text[0..code_detail.lang.size]);
+                try ctx.write("\"");
             }
 
-            ctx.write(">\n") catch return 1;
+            try ctx.write(">\n");
             // TODO: handle in writer
             ctx.current_level += 1;
         },
-        c.MD_BLOCK_P => ctx.writeOpen("<p>") catch return 1,
-        c.MD_BLOCK_TABLE => ctx.writeOpen("<table>") catch return 1,
-        c.MD_BLOCK_THEAD => ctx.writeOpen("<thead>") catch return 1,
-        c.MD_BLOCK_TBODY => ctx.writeOpen("<tbody>") catch return 1,
-        c.MD_BLOCK_TR => ctx.writeOpen("<tr>") catch return 1,
+        c.MD_BLOCK_P => try ctx.writeOpen("<p>"),
+        c.MD_BLOCK_TABLE => try ctx.writeOpen("<table>"),
+        c.MD_BLOCK_THEAD => try ctx.writeOpen("<thead>"),
+        c.MD_BLOCK_TBODY => try ctx.writeOpen("<tbody>"),
+        c.MD_BLOCK_TR => try ctx.writeOpen("<tr>"),
         c.MD_BLOCK_TH => {
             const header_detail = @as(*const c.MD_BLOCK_TD_DETAIL, @ptrCast(@alignCast(detail)));
-            ctx.writeInline("<th") catch return 1;
+            try ctx.writeInline("<th");
 
             const alignment = @field(header_detail, "align");
             if (alignment != c.MD_ALIGN_DEFAULT) {
-                ctx.write(" align=\"") catch return 1;
+                try ctx.write(" align=\"");
 
                 switch (alignment) {
-                    c.MD_ALIGN_LEFT => ctx.write("left") catch return 1,
-                    c.MD_ALIGN_CENTER => ctx.write("center") catch return 1,
-                    c.MD_ALIGN_RIGHT => ctx.write("right") catch return 1,
+                    c.MD_ALIGN_LEFT => try ctx.write("left"),
+                    c.MD_ALIGN_CENTER => try ctx.write("center"),
+                    c.MD_ALIGN_RIGHT => try ctx.write("right"),
                     else => {},
                 }
 
-                ctx.write("\"") catch return 1;
+                try ctx.write("\"");
             }
 
-            ctx.write(">\n") catch return 1;
+            try ctx.write(">\n");
             // TODO: handle in writer
             ctx.current_level += 1;
         },
         c.MD_BLOCK_TD => {
             const cell_detail = @as(*const c.MD_BLOCK_TD_DETAIL, @ptrCast(@alignCast(detail)));
-            ctx.writeInline("<td") catch return 1;
+            try ctx.writeInline("<td");
 
             const alignment = @field(cell_detail, "align");
             if (alignment != c.MD_ALIGN_DEFAULT) {
-                ctx.write(" align=\"") catch return 1;
+                try ctx.write(" align=\"");
 
                 switch (alignment) {
-                    c.MD_ALIGN_LEFT => ctx.write("left") catch return 1,
-                    c.MD_ALIGN_CENTER => ctx.write("center") catch return 1,
-                    c.MD_ALIGN_RIGHT => ctx.write("right") catch return 1,
+                    c.MD_ALIGN_LEFT => try ctx.write("left"),
+                    c.MD_ALIGN_CENTER => try ctx.write("center"),
+                    c.MD_ALIGN_RIGHT => try ctx.write("right"),
                     else => {},
                 }
 
-                ctx.write("\"") catch return 1;
+                try ctx.write("\"");
             }
 
-            ctx.write(">\n") catch return 1;
+            try ctx.write(">\n");
             ctx.current_level += 1;
         },
         else => {},
     }
-
-    return 0;
 }
 
 fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
     const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
+    leave_block_impl(blk, detail, ctx) catch return 1;
+    return 0;
+}
 
+fn leave_block_impl(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, ctx: *RenderContext) !void {
     const headers_closing_tags: [6][]const u8 = .{
         "</h1>",
         "</h2>",
@@ -371,122 +370,129 @@ fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) 
 
     switch (blk) {
         c.MD_BLOCK_DOC => {},
-        c.MD_BLOCK_QUOTE => ctx.writeClose("</blockquote>") catch return 1,
-        c.MD_BLOCK_UL => ctx.writeClose("</ul>") catch return 1,
-        c.MD_BLOCK_OL => ctx.writeClose("</ol>") catch return 1,
-        c.MD_BLOCK_LI => ctx.writeClose("</li>") catch return 1,
+        c.MD_BLOCK_QUOTE => try ctx.writeClose("</blockquote>"),
+        c.MD_BLOCK_UL => try ctx.writeClose("</ul>"),
+        c.MD_BLOCK_OL => try ctx.writeClose("</ol>"),
+        c.MD_BLOCK_LI => try ctx.writeClose("</li>"),
         c.MD_BLOCK_HR => {},
         c.MD_BLOCK_H => {
             const h_detail = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail)));
             const level = h_detail.level;
             if (level >= 1 and level <= 6) {
-                ctx.writeClose(headers_closing_tags[level - 1]) catch return 1;
+                try ctx.writeClose(headers_closing_tags[level - 1]);
             }
         },
         c.MD_BLOCK_CODE => {
-            ctx.writeClose("</code>") catch return 1;
-            ctx.writeClose("</pre>\n") catch return 1;
+            try ctx.writeClose("</code>");
+            try ctx.writeClose("</pre>\n");
         },
-        c.MD_BLOCK_P => ctx.writeClose("</p>") catch return 1,
-        c.MD_BLOCK_TABLE => ctx.writeClose("</table>") catch return 1,
-        c.MD_BLOCK_THEAD => ctx.writeClose("</thead>") catch return 1,
-        c.MD_BLOCK_TBODY => ctx.writeClose("</tbody>") catch return 1,
-        c.MD_BLOCK_TR => ctx.writeClose("</tr>") catch return 1,
-        c.MD_BLOCK_TH => ctx.writeClose("</th>") catch return 1,
-        c.MD_BLOCK_TD => ctx.writeClose("</td>") catch return 1,
+        c.MD_BLOCK_P => try ctx.writeClose("</p>"),
+        c.MD_BLOCK_TABLE => try ctx.writeClose("</table>"),
+        c.MD_BLOCK_THEAD => try ctx.writeClose("</thead>"),
+        c.MD_BLOCK_TBODY => try ctx.writeClose("</tbody>"),
+        c.MD_BLOCK_TR => try ctx.writeClose("</tr>"),
+        c.MD_BLOCK_TH => try ctx.writeClose("</th>"),
+        c.MD_BLOCK_TD => try ctx.writeClose("</td>"),
         else => {},
     }
-
-    return 0;
 }
 
 fn enter_span(span: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
     const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
+    enter_span_impl(span, detail, ctx) catch return 1;
+    return 0;
+}
 
+fn enter_span_impl(span: c.MD_SPANTYPE, detail: ?*anyopaque, ctx: *RenderContext) !void {
     switch (span) {
-        c.MD_SPAN_EM => ctx.write("<em>") catch return 1,
-        c.MD_SPAN_STRONG => ctx.write("<strong>") catch return 1,
+        c.MD_SPAN_EM => try ctx.write("<em>"),
+        c.MD_SPAN_STRONG => try ctx.write("<strong>"),
         c.MD_SPAN_A => {
             // TODO: check if it's a link to a page, that this page exists and is not ignored and add .html
             const a_detail = @as(*const c.MD_SPAN_A_DETAIL, @ptrCast(@alignCast(detail)));
-            ctx.write("<a href=\"") catch return 1;
-            ctx.renderUrlEscaped(a_detail.href.text[0..a_detail.href.size]) catch return 1;
+            try ctx.write("<a href=\"");
+            try ctx.renderUrlEscaped(a_detail.href.text[0..a_detail.href.size]);
 
             if (a_detail.title.text != null and a_detail.title.size > 0) {
-                ctx.write("\" title=\"") catch return 1;
-                ctx.renderHtmlEscaped(a_detail.title.text[0..a_detail.title.size]) catch return 1;
+                try ctx.write("\" title=\"");
+                try ctx.renderHtmlEscaped(a_detail.title.text[0..a_detail.title.size]);
             }
 
-            ctx.write("\">") catch return 1;
+            try ctx.write("\">");
         },
         c.MD_SPAN_IMG => {
             ctx.image_nesting_level += 1;
 
             const img_detail = @as(*const c.MD_SPAN_IMG_DETAIL, @ptrCast(@alignCast(detail)));
-            ctx.write("<img src=\"") catch return 1;
-            ctx.renderUrlEscaped(img_detail.src.text[0..img_detail.src.size]) catch return 1;
+            try ctx.write("<img src=\"");
+            try ctx.renderUrlEscaped(img_detail.src.text[0..img_detail.src.size]);
 
             if (img_detail.title.text != null and img_detail.title.size > 0) {
-                ctx.write("\" title=\"") catch return 1;
-                ctx.renderHtmlEscaped(img_detail.title.text[0..img_detail.title.size]) catch return 1;
+                try ctx.write("\" title=\"");
+                try ctx.renderHtmlEscaped(img_detail.title.text[0..img_detail.title.size]);
             }
 
-            ctx.write("\" alt=\"") catch return 1;
+            try ctx.write("\" alt=\"");
         },
-        c.MD_SPAN_CODE => ctx.write("<code>") catch return 1,
-        c.MD_SPAN_DEL => ctx.write("<del>") catch return 1,
-        c.MD_SPAN_U => ctx.write("<u>") catch return 1,
-        c.MD_SPAN_LATEXMATH => ctx.write("<x-equation>") catch return 1,
-        c.MD_SPAN_LATEXMATH_DISPLAY => ctx.write("<x-equation type=\"display\">") catch return 1,
+        c.MD_SPAN_CODE => try ctx.write("<code>"),
+        c.MD_SPAN_DEL => try ctx.write("<del>"),
+        c.MD_SPAN_U => try ctx.write("<u>"),
+        c.MD_SPAN_LATEXMATH => try ctx.write("<x-equation>"),
+        c.MD_SPAN_LATEXMATH_DISPLAY => try ctx.write("<x-equation type=\"display\">"),
         c.MD_SPAN_WIKILINK => {
             // TODO: check if page exists and is not ignored
             const wikilink_detail = @as(*const c.MD_SPAN_WIKILINK_DETAIL, @ptrCast(@alignCast(detail)));
-            ctx.write("<a href=\"") catch return 1;
-            ctx.renderUrlEscaped(wikilink_detail.target.text[0..wikilink_detail.target.size]) catch return 1;
-            ctx.write(".html\">") catch return 1;
+            try ctx.write("<a href=\"");
+            try ctx.renderUrlEscaped(wikilink_detail.target.text[0..wikilink_detail.target.size]);
+            try ctx.write(".html\">");
         },
         else => {},
     }
-
-    return 0;
 }
 
 fn leave_span(span: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
     const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
+    leave_span_impl(span, detail, ctx) catch return 1;
+    return 0;
+}
+
+fn leave_span_impl(span: c.MD_SPANTYPE, detail: ?*anyopaque, ctx: *RenderContext) !void {
     _ = detail;
 
     switch (span) {
-        c.MD_SPAN_EM => ctx.write("</em>") catch return 1,
-        c.MD_SPAN_STRONG => ctx.write("</strong>") catch return 1,
-        c.MD_SPAN_A => ctx.write("</a>") catch return 1,
+        c.MD_SPAN_EM => try ctx.write("</em>"),
+        c.MD_SPAN_STRONG => try ctx.write("</strong>"),
+        c.MD_SPAN_A => try ctx.write("</a>"),
         c.MD_SPAN_IMG => {
-            ctx.write("\"") catch return 1;
-            ctx.write(">") catch return 1;
+            try ctx.write("\"");
+            try ctx.write(">");
             ctx.image_nesting_level -= 1;
         },
-        c.MD_SPAN_CODE => ctx.write("</code>") catch return 1,
-        c.MD_SPAN_DEL => ctx.write("</del>") catch return 1,
-        c.MD_SPAN_U => ctx.write("</u>") catch return 1,
-        c.MD_SPAN_LATEXMATH => ctx.write("</x-equation>") catch return 1,
-        c.MD_SPAN_LATEXMATH_DISPLAY => ctx.write("</x-equation>") catch return 1,
-        c.MD_SPAN_WIKILINK => ctx.write("</a>") catch return 1,
+        c.MD_SPAN_CODE => try ctx.write("</code>"),
+        c.MD_SPAN_DEL => try ctx.write("</del>"),
+        c.MD_SPAN_U => try ctx.write("</u>"),
+        c.MD_SPAN_LATEXMATH => try ctx.write("</x-equation>"),
+        c.MD_SPAN_LATEXMATH_DISPLAY => try ctx.write("</x-equation>"),
+        c.MD_SPAN_WIKILINK => try ctx.write("</a>"),
         else => {},
     }
-
-    return 0;
 }
 
 fn text(type_val: c.MD_TEXTTYPE, text_data: [*c]const c.MD_CHAR, size: c.MD_SIZE, userdata: ?*anyopaque) callconv(.C) c_int {
     const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
+    text_impl(type_val, text_data, size, ctx) catch return 1;
+    return 0;
+}
+
+fn text_impl(type_val: c.MD_TEXTTYPE, text_data: [*c]const c.MD_CHAR, size: c.MD_SIZE, ctx: *RenderContext) !void {
     const data = text_data[0..size];
 
     // Skip image alt text rendering when inside an image, as it's handled separately
     if (ctx.image_nesting_level > 0 and type_val != c.MD_TEXT_NULLCHAR) {
-        return 0;
+        return;
     }
 
-    ctx.renderText(type_val, data) catch return 1;
-    return 0;
+    try ctx.renderText(type_val, data);
 }
 
 fn processFile(file: std.fs.File, parser: *const c.MD_PARSER, ctx: *RenderContext) !void {
