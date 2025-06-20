@@ -407,6 +407,7 @@ fn enter_span(span: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) c
         c.MD_SPAN_EM => ctx.write("<em>") catch return 1,
         c.MD_SPAN_STRONG => ctx.write("<strong>") catch return 1,
         c.MD_SPAN_A => {
+            // TODO: check if it's a link to a page, that this page exists and is not ignored and add .html
             const a_detail = @as(*const c.MD_SPAN_A_DETAIL, @ptrCast(@alignCast(detail)));
             ctx.write("<a href=\"") catch return 1;
             ctx.renderUrlEscaped(a_detail.href.text[0..a_detail.href.size]) catch return 1;
@@ -438,10 +439,11 @@ fn enter_span(span: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) c
         c.MD_SPAN_LATEXMATH => ctx.write("<x-equation>") catch return 1,
         c.MD_SPAN_LATEXMATH_DISPLAY => ctx.write("<x-equation type=\"display\">") catch return 1,
         c.MD_SPAN_WIKILINK => {
+            // TODO: check if page exists and is not ignored
             const wikilink_detail = @as(*const c.MD_SPAN_WIKILINK_DETAIL, @ptrCast(@alignCast(detail)));
             ctx.write("<a href=\"") catch return 1;
             ctx.renderUrlEscaped(wikilink_detail.target.text[0..wikilink_detail.target.size]) catch return 1;
-            ctx.write("\">") catch return 1;
+            ctx.write(".html\">") catch return 1;
         },
         else => {},
     }
