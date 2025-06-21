@@ -574,30 +574,26 @@ pub fn main() !void {
         }
     }
 
-    // Collect inputs for processing
-    // TODO: cleanup path work, simplify list and basename/nested folders logic
     var input_files = std.StringHashMap([]const u8).init(allocator);
 
-    const input_path_absolute = try std.fs.realpathAlloc(allocator, input_path);
-    const stat = try std.fs.cwd().statFile(input_path_absolute);
-    print("Input arg resolved to '{s}'\n", .{input_path_absolute});
-
     // Collect all .md files from dirs
+    const stat = try std.fs.cwd().statFile(input_path);
+
     if (stat.kind == .directory) {
-        var dir = try std.fs.cwd().openDir(input_path_absolute, .{ .iterate = true });
+        var dir = try std.fs.cwd().openDir(input_path, .{ .iterate = true });
         defer dir.close();
         var walker = try dir.walk(allocator);
 
         while (try walker.next()) |entry| {
             if (entry.kind == .file and mem.eql(u8, std.fs.path.extension(entry.basename), ".md")) {
-                const full_path = try std.fs.path.join(allocator, &[_][]const u8{ input_path_absolute, entry.path });
+                const full_path = try std.fs.path.join(allocator, &[_][]const u8{ input_path, entry.path });
                 const rel_path = try allocator.dupe(u8, entry.path);
                 try input_files.put(full_path, rel_path);
             }
         }
         // Collect individual files
-    } else if (stat.kind == .file and mem.eql(u8, std.fs.path.extension(input_path_absolute), ".md")) {
-        try input_files.put(input_path_absolute, std.fs.path.basename(input_path_absolute));
+    } else if (stat.kind == .file and mem.eql(u8, std.fs.path.extension(input_path), ".md")) {
+        try input_files.put(input_path, std.fs.path.basename(input_path));
     }
 
     const parser = c.MD_PARSER{
