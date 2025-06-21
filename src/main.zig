@@ -18,13 +18,19 @@ const Page = struct {
     // https://docs.github.com/en/contributing/writing-for-github-docs/using-yaml-frontmatter
     const Meta = struct {
         title: []const u8,
-        url: []const u8,
+        url: ?[]const u8,
         date: ?[]const u8 = null,
         skip: bool = false,
     };
+
+    const Link = struct {
+        text: []const u8,
+        link: []const u8,
+        pos: usize,
+    };
 };
 
-/// Builds HTML string
+/// Context for building HTML string inside md4c callbacks
 const RenderContext = struct {
     allocator: mem.Allocator,
     buf: std.ArrayList(u8),
@@ -538,7 +544,7 @@ fn processFile(file: std.fs.File, name: []const u8, pages: *std.StringHashMap(Pa
     try pages.put(name, page);
 
     // Parse the markdown content
-    try ctx.writeHtmlHead(name);
+    try ctx.writeHtmlHead(page.meta.title);
     _ = c.md_parse(@ptrCast(&buf[yaml_end]), @intCast(bytes_read - yaml_end), parser, ctx);
     try ctx.writeHtmlTail();
     defer ctx.allocator.free(buf);
@@ -550,12 +556,8 @@ pub fn main() !void {
     const allocator = arena.allocator();
     defer arena.deinit();
 
-    const default_dest = "topaz-out";
-    var dest_dir_path: [std.fs.max_path_bytes]u8 = undefined;
-    var dest_dir_path_len: usize = default_dest.len;
-    @memcpy(dest_dir_path[0..default_dest.len], default_dest);
-
     var input_path: []const u8 = "."; // Default to current directory
+    var output_path: []const u8 = "topaz-out";
 
     const args = try std.process.argsAlloc(allocator);
     // Parse the command line arguments. Config arguments that take a value
@@ -568,12 +570,12 @@ pub fn main() !void {
                 found_input = true;
             }
         } else if (mem.startsWith(u8, arg, "--out=")) {
-            dest_dir_path_len = arg.len - 6;
-            @memcpy(dest_dir_path[0..dest_dir_path_len], arg[6..]);
+            output_path = arg[6..];
         }
     }
 
     // Collect inputs for processing
+    // TODO: cleanup path work, simplify list and basename/nested folders logic
     var input_files = std.StringHashMap([]const u8).init(allocator);
 
     const input_path_absolute = try std.fs.realpathAlloc(allocator, input_path);
@@ -616,13 +618,11 @@ pub fn main() !void {
     };
 
     // Create output directory
-    const dest_dir = std.fs.path.resolve(allocator, &[_][]const u8{dest_dir_path[0..dest_dir_path_len]}) catch |err| {
+    const dest_dir = std.fs.path.resolve(allocator, &[_][]const u8{output_path}) catch |err| {
         print("Failed to resolve dest path: {any}\n", .{err});
         return err;
     };
-    @memcpy(dest_dir_path[0..dest_dir.len], dest_dir);
-    dest_dir_path_len = dest_dir.len;
-    print("Out dir is \"{s}\"\n", .{dest_dir_path[0..dest_dir_path_len]});
+    print("Out dir is \"{s}\"\n", .{output_path});
     try std.fs.cwd().makePath(dest_dir);
 
     // Process files
@@ -635,9 +635,9 @@ pub fn main() !void {
 
         const dir_part = std.fs.path.dirname(relative_path) orelse "";
         const dest_dir_full = if (dir_part.len > 0)
-            try std.fs.path.join(allocator, &[_][]const u8{ dest_dir_path[0..dest_dir_path_len], dir_part })
+            try std.fs.path.join(allocator, &[_][]const u8{ output_path, dir_part })
         else
-            dest_dir_path[0..dest_dir_path_len];
+            output_path;
 
         try std.fs.cwd().makePath(dest_dir_full);
 
