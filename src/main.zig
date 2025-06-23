@@ -24,10 +24,53 @@ const Page = struct {
     };
 
     const Link = struct {
-        text: []const u8,
         link: []const u8,
-        pos: usize,
+        text: ?[]const u8 = null,
     };
+};
+
+const LinkValues = std.StringHashMap(Page.Link);
+const Links = std.StringHashMap(LinkValues);
+
+///  Stores relationships between Pages
+const PageGraph = struct {
+    allocator: std.mem.Allocator,
+    pages: std.StringHashMap(Page),
+    ///  What links page have
+    forward: Links,
+    //  Who links to that page
+    // backward: Links,
+
+    pub fn init(allocator: std.mem.Allocator) !PageGraph {
+        const pages = std.StringHashMap(Page).init(allocator);
+        const forward = Links.init(allocator);
+
+        return .{
+            .allocator = allocator,
+            .pages = pages,
+            .forward = forward,
+        };
+    }
+
+    pub fn deinit(self: *PageGraph) void {
+        self.pages.deinit();
+        self.forward.deinit();
+        // self.backward.deinit();
+    }
+
+    pub fn addPage(self: *PageGraph, page: Page) !void {
+        try self.pages.put(page.path, page);
+
+        try self.forward.put(page.path, std.StringHashMap(Page.Link).init(self.allocator));
+    }
+
+    pub fn addLink(self: *PageGraph, page: Page, link: Page.Link) !void {
+        if (!self.pages.contains(page.path)) try self.addPage(page);
+        var forward_links_ptr = self.forward.getPtr(page.path) orelse return error.LinksNotFound;
+        // TODO: we probably want to use real hashing function here
+        const id = try std.fmt.allocPrint(self.allocator, "{s}{s}{any}", .{ page.path, link.link, link.text });
+        try forward_links_ptr.put(id, link);
+    }
 };
 
 /// Context for building HTML string inside md4c callbacks
@@ -37,12 +80,18 @@ const RenderContext = struct {
     image_nesting_level: u32 = 0,
     current_level: u32 = 0,
 
-    pub fn init(allocator: mem.Allocator) !RenderContext {
+    cur_wikilink_link: ?Page.Link = null,
+
+    graph: PageGraph,
+    cur_page: ?Page = null,
+
+    pub fn init(allocator: mem.Allocator, graph: PageGraph) !RenderContext {
         const buf = std.ArrayList(u8).init(allocator);
 
         return .{
             .buf = buf,
             .allocator = allocator,
+            .graph = graph,
         };
     }
 
@@ -54,10 +103,9 @@ const RenderContext = struct {
         try self.buf.appendSlice(str);
     }
 
-    pub fn writeInline(self: *RenderContext, str: []const u8) !void {
+    pub fn writeIndented(self: *RenderContext, str: []const u8) !void {
         for (0..self.current_level) |_| try self.write("    ");
         try self.write(str);
-        try self.write("\n");
     }
 
     pub fn writeOpen(self: *RenderContext, str: []const u8) !void {
@@ -89,8 +137,8 @@ const RenderContext = struct {
         self.current_level = 2;
 
         var title_buf: [1024]u8 = undefined;
-        const title = try std.fmt.bufPrint(&title_buf, "<title>{s}</title>", .{page_title});
-        try self.writeInline(title);
+        const title = try std.fmt.bufPrint(&title_buf, "<title>{s}</title>\n", .{page_title});
+        try self.writeIndented(title);
 
         try self.writeClose("</head>");
         try self.writeOpen("<body>");
@@ -99,6 +147,34 @@ const RenderContext = struct {
     pub fn writeHtmlTail(self: *RenderContext) !void {
         try self.writeClose("</body>");
         try self.writeClose("</html>");
+    }
+
+    pub fn writeFooter(self: *RenderContext) !void {
+        const page = self.cur_page orelse unreachable;
+        const links = self.graph.forward.get(page.path) orelse return error.MissingLinks;
+
+        if (links.count() > 0) {
+            try self.writeOpen("<footer>");
+            try self.writeIndented("<h3>Outcoming Links</h3>\n");
+            try self.writeOpen("<ul>");
+            var iterator = links.valueIterator();
+            while (iterator.next()) |link| {
+                try self.writeOpen("<li>");
+
+                try self.writeIndented("<a href=\"");
+                try self.renderUrlEscaped(link.link);
+                try self.write(".html\">");
+                if (link.text) |link_text| {
+                    try self.write(link_text);
+                } else {
+                    try self.write(link.link);
+                }
+                try self.write("</a>\n");
+                try self.writeClose("</li>");
+            }
+            try self.writeClose("</ul>");
+            try self.writeClose("</footer>");
+        }
     }
 
     pub fn renderText(self: *RenderContext, text_type: c.MD_TEXTTYPE, data: []const u8) !void {
@@ -295,7 +371,7 @@ fn enter_block_impl(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, ctx: *RenderContex
                 try ctx.writeOpen("<li>");
             }
         },
-        c.MD_BLOCK_HR => try ctx.writeInline("<hr>"),
+        c.MD_BLOCK_HR => try ctx.writeIndented("<hr>\n"),
         c.MD_BLOCK_H => {
             const h_detail = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail)));
             const level = h_detail.level;
@@ -306,7 +382,7 @@ fn enter_block_impl(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, ctx: *RenderContex
         c.MD_BLOCK_CODE => {
             const code_detail = @as(*const c.MD_BLOCK_CODE_DETAIL, @ptrCast(@alignCast(detail)));
             try ctx.writeOpen("<pre>");
-            try ctx.writeInline("<code");
+            try ctx.writeIndented("<code");
 
             if (code_detail.lang.text != null and code_detail.lang.size > 0) {
                 try ctx.write(" class=\"language-");
@@ -325,7 +401,7 @@ fn enter_block_impl(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, ctx: *RenderContex
         c.MD_BLOCK_TR => try ctx.writeOpen("<tr>"),
         c.MD_BLOCK_TH => {
             const header_detail = @as(*const c.MD_BLOCK_TD_DETAIL, @ptrCast(@alignCast(detail)));
-            try ctx.writeInline("<th");
+            try ctx.writeIndented("<th");
 
             const alignment = @field(header_detail, "align");
             if (alignment != c.MD_ALIGN_DEFAULT) {
@@ -347,7 +423,7 @@ fn enter_block_impl(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, ctx: *RenderContex
         },
         c.MD_BLOCK_TD => {
             const cell_detail = @as(*const c.MD_BLOCK_TD_DETAIL, @ptrCast(@alignCast(detail)));
-            try ctx.writeInline("<td");
+            try ctx.writeIndented("<td");
 
             const alignment = @field(cell_detail, "align");
             if (alignment != c.MD_ALIGN_DEFAULT) {
@@ -460,9 +536,13 @@ fn enter_span_impl(span: c.MD_SPANTYPE, detail: ?*anyopaque, ctx: *RenderContext
         c.MD_SPAN_WIKILINK => {
             // TODO: check if page exists and is not ignored
             const wikilink_detail = @as(*const c.MD_SPAN_WIKILINK_DETAIL, @ptrCast(@alignCast(detail)));
+            const target = wikilink_detail.target;
             try ctx.write("<a href=\"");
-            try ctx.renderUrlEscaped(wikilink_detail.target.text[0..wikilink_detail.target.size]);
+            try ctx.renderUrlEscaped(target.text[0..target.size]);
             try ctx.write(".html\">");
+            ctx.cur_wikilink_link = Page.Link{
+                .link = try ctx.allocator.dupe(u8, target.text[0..target.size]),
+            };
         },
         else => {},
     }
@@ -491,7 +571,15 @@ fn leave_span_impl(span: c.MD_SPANTYPE, detail: ?*anyopaque, ctx: *RenderContext
         c.MD_SPAN_U => try ctx.write("</u>"),
         c.MD_SPAN_LATEXMATH => try ctx.write("</x-equation>"),
         c.MD_SPAN_LATEXMATH_DISPLAY => try ctx.write("</x-equation>"),
-        c.MD_SPAN_WIKILINK => try ctx.write("</a>"),
+        c.MD_SPAN_WIKILINK => {
+            try ctx.write("</a>");
+            if (ctx.cur_wikilink_link) |cur_wikilink| {
+                if (ctx.cur_page) |cur_page| {
+                    try ctx.graph.addLink(cur_page, cur_wikilink);
+                }
+                ctx.cur_wikilink_link = null;
+            }
+        },
         else => {},
     }
 }
@@ -510,10 +598,16 @@ fn text_impl(type_val: c.MD_TEXTTYPE, text_data: [*c]const c.MD_CHAR, size: c.MD
         return;
     }
 
+    if (ctx.cur_wikilink_link) |*wikilink| {
+        if (wikilink.text == null) {
+            wikilink.text = try ctx.allocator.dupe(u8, data);
+        }
+    }
+
     try ctx.renderText(type_val, data);
 }
 
-fn processFile(file: std.fs.File, name: []const u8, pages: *std.StringHashMap(Page), parser: *const c.MD_PARSER, ctx: *RenderContext) !void {
+fn processFile(file: std.fs.File, name: []const u8, parser: *const c.MD_PARSER, ctx: *RenderContext) !void {
     const file_size = try file.getEndPos();
     var buf = try ctx.allocator.alloc(u8, file_size);
     errdefer ctx.allocator.free(buf);
@@ -530,7 +624,7 @@ fn processFile(file: std.fs.File, name: []const u8, pages: *std.StringHashMap(Pa
         }
     }
 
-    if (yaml_end != 0) print("YAML found [0..{d}]\n", .{yaml_end});
+    // if (yaml_end != 0) print("YAML found [0..{d}]\n", .{yaml_end});
 
     const page = Page{
         .path = name,
@@ -541,11 +635,13 @@ fn processFile(file: std.fs.File, name: []const u8, pages: *std.StringHashMap(Pa
         },
     };
 
-    try pages.put(name, page);
+    try ctx.graph.addPage(page);
+    ctx.cur_page = page;
 
     // Parse the markdown content
     try ctx.writeHtmlHead(page.meta.title);
     _ = c.md_parse(@ptrCast(&buf[yaml_end]), @intCast(bytes_read - yaml_end), parser, ctx);
+    try ctx.writeFooter();
     try ctx.writeHtmlTail();
     defer ctx.allocator.free(buf);
     defer file.close();
@@ -622,7 +718,7 @@ pub fn main() !void {
     try std.fs.cwd().makePath(dest_dir);
 
     // Process files
-    var pages = std.StringHashMap(Page).init(allocator);
+    const graph = try PageGraph.init(allocator);
 
     var iter = input_files.iterator();
     while (iter.next()) |entry| {
@@ -642,12 +738,12 @@ pub fn main() !void {
         const dest_path = try std.fs.path.join(allocator, &[_][]const u8{ dest_dir_full, dest_filename });
 
         // Render HTMl
-        var ctx = try RenderContext.init(allocator);
+        var ctx = try RenderContext.init(allocator, graph);
         defer ctx.deinit();
         const file = try std.fs.cwd().openFile(file_path, .{});
         const file_stat = try file.stat();
         print("Processing {s} ({d}b)-> {s}\n", .{ file_path, file_stat.size, dest_path });
-        try processFile(file, page_name, &pages, &parser, &ctx);
+        try processFile(file, page_name, &parser, &ctx);
 
         const dest_file = try std.fs.cwd().createFile(dest_path, .{});
         defer dest_file.close();
