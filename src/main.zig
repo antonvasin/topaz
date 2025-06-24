@@ -9,7 +9,10 @@ const mem = std.mem;
 const assert = std.debug.assert;
 
 const Page = struct {
+    name: []const u8,
     path: []const u8,
+    out_path: []const u8,
+    html_index: usize,
     meta: Meta,
 
     // https://help.obsidian.md/properties
@@ -25,7 +28,7 @@ const Page = struct {
 
     const Link = struct {
         link: []const u8,
-        text: ?[]const u8 = null,
+        text: []const u8,
     };
 };
 
@@ -39,37 +42,55 @@ const PageGraph = struct {
     ///  What links page have
     forward: Links,
     //  Who links to that page
-    // backward: Links,
+    backward: Links,
 
     pub fn init(allocator: std.mem.Allocator) !PageGraph {
         const pages = std.StringHashMap(Page).init(allocator);
         const forward = Links.init(allocator);
+        const backward = Links.init(allocator);
 
         return .{
             .allocator = allocator,
             .pages = pages,
             .forward = forward,
+            .backward = backward,
         };
     }
 
     pub fn deinit(self: *PageGraph) void {
         self.pages.deinit();
         self.forward.deinit();
-        // self.backward.deinit();
+        self.backward.deinit();
     }
 
     pub fn addPage(self: *PageGraph, page: Page) !void {
-        try self.pages.put(page.path, page);
+        try self.pages.put(page.name, page);
 
-        try self.forward.put(page.path, std.StringHashMap(Page.Link).init(self.allocator));
+        if (!self.forward.contains(page.name)) {
+            try self.forward.put(page.name, std.StringHashMap(Page.Link).init(self.allocator));
+        }
+        if (!self.backward.contains(page.name)) {
+            try self.backward.put(page.name, std.StringHashMap(Page.Link).init(self.allocator));
+        }
     }
 
-    pub fn addLink(self: *PageGraph, page: Page, link: Page.Link) !void {
-        if (!self.pages.contains(page.path)) try self.addPage(page);
-        var forward_links_ptr = self.forward.getPtr(page.path) orelse return error.LinksNotFound;
+    pub fn addLink(self: *PageGraph, page_name: []const u8, link: Page.Link) !void {
+        // if (!self.pages.contains(page_name)) try self.addPage(page_name);
         // TODO: we probably want to use real hashing function here
-        const id = try std.fmt.allocPrint(self.allocator, "{s}{s}{any}", .{ page.path, link.link, link.text });
+        const id = try std.fmt.allocPrint(self.allocator, "{s}{s}{any}", .{ page_name, link.link, link.text });
+
+        var forward_links_ptr = self.forward.getPtr(page_name) orelse return error.LinksNotFound;
         try forward_links_ptr.put(id, link);
+
+        var backward_links_ptr = try self.backward.getOrPut(link.link);
+        if (!backward_links_ptr.found_existing) {
+            backward_links_ptr.value_ptr.* = std.StringHashMap(Page.Link).init(self.allocator);
+        }
+        const backward_link = Page.Link{
+            .link = page_name,
+            .text = page_name,
+        };
+        try backward_links_ptr.value_ptr.put(id, backward_link);
     }
 };
 
@@ -82,10 +103,10 @@ const RenderContext = struct {
 
     cur_wikilink_link: ?Page.Link = null,
 
-    graph: PageGraph,
-    cur_page: ?Page = null,
+    graph: *PageGraph,
+    cur_page: []const u8 = undefined,
 
-    pub fn init(allocator: mem.Allocator, graph: PageGraph) !RenderContext {
+    pub fn init(allocator: mem.Allocator, graph: *PageGraph) !RenderContext {
         const buf = std.ArrayList(u8).init(allocator);
 
         return .{
@@ -96,7 +117,7 @@ const RenderContext = struct {
     }
 
     pub fn deinit(self: *RenderContext) void {
-        self.buf.deinit();
+        _ = self;
     }
 
     pub fn write(self: *RenderContext, str: []const u8) !void {
@@ -150,31 +171,50 @@ const RenderContext = struct {
     }
 
     pub fn writeFooter(self: *RenderContext) !void {
-        const page = self.cur_page orelse unreachable;
-        const links = self.graph.forward.get(page.path) orelse return error.MissingLinks;
+        const page = self.cur_page;
+        const forward_links = self.graph.forward.get(page) orelse return error.MissingLinks;
 
-        if (links.count() > 0) {
-            try self.writeOpen("<footer>");
-            try self.writeIndented("<h3>Outcoming Links</h3>\n");
+        try self.writeOpen("<footer>");
+        if (forward_links.count() > 0) {
+            try self.writeIndented("<h3>Forward Links</h3>\n");
             try self.writeOpen("<ul>");
-            var iterator = links.valueIterator();
+            var iterator = forward_links.valueIterator();
             while (iterator.next()) |link| {
                 try self.writeOpen("<li>");
 
                 try self.writeIndented("<a href=\"");
                 try self.renderUrlEscaped(link.link);
                 try self.write(".html\">");
-                if (link.text) |link_text| {
-                    try self.write(link_text);
-                } else {
-                    try self.write(link.link);
-                }
+                try self.write(link.text);
                 try self.write("</a>\n");
                 try self.writeClose("</li>");
             }
             try self.writeClose("</ul>");
-            try self.writeClose("</footer>");
         }
+
+        const backward_links = self.graph.backward.get(page);
+        if (backward_links) |links| {
+            print("\t[{s}] Back links: {d}\n", .{ page, links.count() });
+            if (links.count() > 0) {
+                try self.writeIndented("<h3>Back Links</h3>\n");
+                try self.writeOpen("<ul>");
+                var iterator = links.valueIterator();
+                while (iterator.next()) |link| {
+                    try self.writeOpen("<li>");
+
+                    try self.writeIndented("<a href=\"");
+                    try self.renderUrlEscaped(link.link);
+                    try self.write(".html\">");
+                    try self.write(link.text);
+                    try self.write("</a>\n");
+                    try self.writeClose("</li>");
+                }
+                try self.writeClose("</ul>");
+            }
+        } else {
+            print("\t[{s}] Back links: 0\n", .{page});
+        }
+        try self.writeClose("</footer>");
     }
 
     pub fn renderText(self: *RenderContext, text_type: c.MD_TEXTTYPE, data: []const u8) !void {
@@ -542,6 +582,7 @@ fn enter_span_impl(span: c.MD_SPANTYPE, detail: ?*anyopaque, ctx: *RenderContext
             try ctx.write(".html\">");
             ctx.cur_wikilink_link = Page.Link{
                 .link = try ctx.allocator.dupe(u8, target.text[0..target.size]),
+                .text = undefined,
             };
         },
         else => {},
@@ -574,9 +615,7 @@ fn leave_span_impl(span: c.MD_SPANTYPE, detail: ?*anyopaque, ctx: *RenderContext
         c.MD_SPAN_WIKILINK => {
             try ctx.write("</a>");
             if (ctx.cur_wikilink_link) |cur_wikilink| {
-                if (ctx.cur_page) |cur_page| {
-                    try ctx.graph.addLink(cur_page, cur_wikilink);
-                }
+                try ctx.graph.addLink(ctx.cur_page, cur_wikilink);
                 ctx.cur_wikilink_link = null;
             }
         },
@@ -599,15 +638,22 @@ fn text_impl(type_val: c.MD_TEXTTYPE, text_data: [*c]const c.MD_CHAR, size: c.MD
     }
 
     if (ctx.cur_wikilink_link) |*wikilink| {
-        if (wikilink.text == null) {
-            wikilink.text = try ctx.allocator.dupe(u8, data);
-        }
+        wikilink.text = try ctx.allocator.dupe(u8, data);
     }
 
     try ctx.renderText(type_val, data);
 }
 
-fn processFile(file: std.fs.File, name: []const u8, parser: *const c.MD_PARSER, ctx: *RenderContext) !void {
+fn processFile(file_path: []const u8, config: *Config, parser: *const c.MD_PARSER, ctx: *RenderContext, html_index: usize) !void {
+    const full_path = try std.fs.path.join(ctx.allocator, &[_][]const u8{ config.input_path, file_path });
+    const file = std.fs.cwd().openFile(full_path, .{}) catch |err| {
+        print("Failed to read {s}, skipping\n", .{full_path});
+        return err;
+    };
+
+    const file_stat = try file.stat();
+    print("Processing {s} ({d}b)\n", .{ file_path, file_stat.size });
+
     const file_size = try file.getEndPos();
     var buf = try ctx.allocator.alloc(u8, file_size);
     errdefer ctx.allocator.free(buf);
@@ -624,10 +670,22 @@ fn processFile(file: std.fs.File, name: []const u8, parser: *const c.MD_PARSER, 
         }
     }
 
-    // if (yaml_end != 0) print("YAML found [0..{d}]\n", .{yaml_end});
+    // input_folder  /note-01           .md
+    // input_folder  /subfolder/note-02 .md
+    //
+    // [input_dir]   /      [name]      .md
+    // [outdir]      /      [name]      .html
 
+    const name = file_path[0 .. file_path.len - 3];
+
+    const out_path = try std.fmt.allocPrint(ctx.allocator, "{s}.html", .{name});
+
+    // std.log.debug("Parsed page: {s}, {s} -> {s}", .{ name, file_path, out_path });
     const page = Page{
-        .path = name,
+        .name = name,
+        .path = file_path,
+        .out_path = out_path,
+        .html_index = html_index,
         .meta = .{
             .title = name,
             .skip = false,
@@ -636,60 +694,69 @@ fn processFile(file: std.fs.File, name: []const u8, parser: *const c.MD_PARSER, 
     };
 
     try ctx.graph.addPage(page);
-    ctx.cur_page = page;
+    ctx.cur_page = page.name;
 
     // Parse the markdown content
     try ctx.writeHtmlHead(page.meta.title);
     _ = c.md_parse(@ptrCast(&buf[yaml_end]), @intCast(bytes_read - yaml_end), parser, ctx);
-    try ctx.writeFooter();
-    try ctx.writeHtmlTail();
-    defer ctx.allocator.free(buf);
     defer file.close();
 }
+
+const Config = struct {
+    input_path: []const u8, // Default to current directory
+    output_path: []const u8,
+    is_debug: bool = false,
+};
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const allocator = arena.allocator();
     defer arena.deinit();
 
-    var input_path: []const u8 = "."; // Default to current directory
-    var output_path: []const u8 = "topaz-out";
+    var config = Config{
+        .input_path = ".",
+        .output_path = "topaz-out",
+        .is_debug = false,
+    };
 
     const args = try std.process.argsAlloc(allocator);
     // Parse the command line arguments. Config arguments that take a value
     // must use '='. The first non-flag argument is treated as input source.
+    // TODO: add support for list of inputs
     var found_input = false;
     for (args[1..]) |arg| {
         if (!mem.startsWith(u8, arg, "--")) {
             if (!found_input) {
-                input_path = arg;
+                config.input_path = arg;
                 found_input = true;
             }
         } else if (mem.startsWith(u8, arg, "--out=")) {
-            output_path = arg[6..];
+            config.output_path = arg[6..];
+        } else if (mem.eql(u8, arg, "--debug")) {
+            config.is_debug = true;
         }
     }
 
-    var input_files = std.StringHashMap([]const u8).init(allocator);
+    var input_files = std.ArrayList([]const u8).init(allocator);
+    defer input_files.deinit();
+
+    const stat = try std.fs.cwd().statFile(config.input_path);
 
     // Collect all .md files from dirs
-    const stat = try std.fs.cwd().statFile(input_path);
-
     if (stat.kind == .directory) {
-        var dir = try std.fs.cwd().openDir(input_path, .{ .iterate = true });
+        var dir = try std.fs.cwd().openDir(config.input_path, .{ .iterate = true });
         defer dir.close();
         var walker = try dir.walk(allocator);
 
         while (try walker.next()) |entry| {
             if (entry.kind == .file and mem.eql(u8, std.fs.path.extension(entry.basename), ".md")) {
-                const full_path = try std.fs.path.join(allocator, &[_][]const u8{ input_path, entry.path });
-                const rel_path = try allocator.dupe(u8, entry.path);
-                try input_files.put(full_path, rel_path);
+                const path = try allocator.dupe(u8, entry.path);
+                try input_files.append(path);
             }
         }
-        // Collect individual files
-    } else if (stat.kind == .file and mem.eql(u8, std.fs.path.extension(input_path), ".md")) {
-        try input_files.put(input_path, std.fs.path.basename(input_path));
+    } else if (stat.kind == .file and mem.eql(u8, std.fs.path.extension(config.input_path), ".md")) {
+        // Collect individual input files
+        try input_files.append(config.input_path);
     }
 
     const parser = c.MD_PARSER{
@@ -710,42 +777,42 @@ pub fn main() !void {
     };
 
     // Create output directory
-    const dest_dir = std.fs.path.resolve(allocator, &[_][]const u8{output_path}) catch |err| {
+    const dest_dir = std.fs.path.resolve(allocator, &[_][]const u8{config.output_path}) catch |err| {
         print("Failed to resolve dest path: {any}\n", .{err});
         return err;
     };
-    print("Out dir is \"{s}\"\n", .{output_path});
+    print("Out dir is \"{s}\"\n", .{config.output_path});
     try std.fs.cwd().makePath(dest_dir);
 
     // Process files
-    const graph = try PageGraph.init(allocator);
+    var graph = try PageGraph.init(allocator);
+    var contexts = std.ArrayList(RenderContext).init(allocator);
 
-    var iter = input_files.iterator();
-    while (iter.next()) |entry| {
-        const file_path = entry.key_ptr.*;
-        const relative_path = entry.value_ptr.*;
+    // while (iter.next()) |entry| {
+    for (input_files.items, 0..) |path, i| {
+        const ctx = try RenderContext.init(allocator, &graph);
+        try contexts.append(ctx);
+        try processFile(path, &config, &parser, &contexts.items[i], i);
+    }
 
-        const dir_part = std.fs.path.dirname(relative_path) orelse "";
-        const dest_dir_full = if (dir_part.len > 0)
-            try std.fs.path.join(allocator, &[_][]const u8{ output_path, dir_part })
+    var pages = graph.pages.valueIterator();
+    while (pages.next()) |page| {
+        // Post processing, write header/footer and write to file
+        // std.log.debug("Writing {s}\n", .{page.name});
+
+        var ctx = &contexts.items[page.html_index];
+        ctx.cur_page = page.name;
+        try ctx.writeFooter();
+        try ctx.writeHtmlTail();
+
+        const dir_path = if (std.fs.path.dirname(page.out_path)) |dir|
+            try std.fs.path.join(allocator, &[_][]const u8{ config.output_path, dir })
         else
-            output_path;
+            config.output_path;
 
-        try std.fs.cwd().makePath(dest_dir_full);
-
-        const page_name = std.fs.path.stem(std.fs.path.basename(relative_path));
-        const dest_filename = try std.fmt.allocPrint(allocator, "{s}.html", .{page_name});
-        const dest_path = try std.fs.path.join(allocator, &[_][]const u8{ dest_dir_full, dest_filename });
-
-        // Render HTMl
-        var ctx = try RenderContext.init(allocator, graph);
-        defer ctx.deinit();
-        const file = try std.fs.cwd().openFile(file_path, .{});
-        const file_stat = try file.stat();
-        print("Processing {s} ({d}b)-> {s}\n", .{ file_path, file_stat.size, dest_path });
-        try processFile(file, page_name, &parser, &ctx);
-
-        const dest_file = try std.fs.cwd().createFile(dest_path, .{});
+        const out_path = try std.fs.path.join(allocator, &[_][]const u8{ config.output_path, page.out_path });
+        try std.fs.cwd().makePath(dir_path);
+        const dest_file = try std.fs.cwd().createFile(out_path, .{});
         defer dest_file.close();
         const fw = dest_file.writer();
         _ = try fw.writeAll(ctx.buf.items);

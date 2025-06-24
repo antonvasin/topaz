@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(cd:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(head:*)",
+      "Bash(ls:*)",
+      "Bash(rm:*)",
+      "Bash(zig build run:*)",
+      "Bash(zig build test)",
+      "Bash(zig build)",
+      "Bash(zig build:*)",
+      "Bash(zig run:*)",
+      "Bash(zig test:*)",
+      "Bash(rg:*)",
+      "Bash(./test.sh)"
+    ],
+    "deny": []
+  }
+}
