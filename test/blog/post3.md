@@ -1,5 +1,4 @@
 ---
-publish: false
 js: './blog/custom.ts'
 ---
 

@@ -3,7 +3,6 @@ title: "Layout Test"
 description: "Lorem ipsum dolor sit amet"
 pubDate: "Jul 02 2022"
 heroImage: "/placeholder-hero.jpg"
-draft: true
 ---
 
 # Heading 1

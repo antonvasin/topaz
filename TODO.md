@@ -4,7 +4,7 @@
 
 - [x] Integrate [`md4c`](https://github.com/mity/md4c)
 - [ ] Generate slugs for URLs and headers
-- [ ] Process Wiki-style links
+- [x] Process Wiki-style links
 - [ ] Add tests for [Git book](https://github.com/progit/progit/tree/master/en)
 - [ ] Add tests for Obsidian vault
 
@@ -28,14 +28,14 @@
 - [ ] Generate chronological Archive/All posts info
 - [ ] Pin current pages version
 - [ ] Generate RSS feed
-- [ ] Collect backlinks
-- [ ] Generate Table of Contents for single page
+- [x] Collect backlinks
+- [ ] Parse headers, generate Table of Contents
 - [ ] Hash/diff individual paragraphs
 
 ## Metadata
 
-- [ ] Read and parse frontmatter, probably with [zig-yaml](https://github.com/kubkon/zig-yaml/)
-- [ ] Filter out empty and drafts/private notes
+- [x] Read and parse frontmatter, probably with [zig-yaml](https://github.com/kubkon/zig-yaml/)
+- [x] Filter out empty and drafts/private notes
 - [ ] Created/last edited at timestamps
 - [ ] Support `alias`
 

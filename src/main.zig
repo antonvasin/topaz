@@ -3,10 +3,46 @@ const builtin = @import("builtin");
 const c = @cImport({
     @cInclude("md4c.h");
 });
+const yaml = @import("yaml");
+const Yaml = yaml.Yaml;
 
 const print = std.debug.print;
+const log = std.log.scoped(.topaz);
 const mem = std.mem;
 const assert = std.debug.assert;
+
+pub const std_options: std.Options = .{
+    // Set the log level to info
+    // .log_level = .info,
+
+    // Define logFn to override the std implementation
+    .logFn = myLogFn,
+};
+
+pub fn myLogFn(
+    comptime level: std.log.Level,
+    comptime scope: @Type(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    // Ignore all non-error logging from sources other than
+    // .my_project, .nice_library and the default
+    const scope_prefix = "(" ++ switch (scope) {
+        .topaz, std.log.default_log_scope => @tagName(scope),
+        else => if (@intFromEnum(level) <= @intFromEnum(std.log.Level.err))
+            @tagName(scope)
+        else
+            return,
+    } ++ "): ";
+
+    const prefix = "[" ++ comptime level.asText() ++ "] " ++ scope_prefix;
+
+    // Print the message to stderr, silently ignoring any errors
+    std.debug.lockStdErr();
+    defer std.debug.unlockStdErr();
+    const stderr = std.io.getStdErr().writer();
+    nosuspend stderr.print(prefix ++ format ++ "\n", args) catch return;
+}
 
 const Page = struct {
     name: []const u8,
@@ -15,10 +51,6 @@ const Page = struct {
     html_index: usize,
     meta: Meta,
 
-    // https://help.obsidian.md/properties
-    // https://help.obsidian.md/publish/seo#Metadata
-    // https://help.obsidian.md/publish/permalinks
-    // https://docs.github.com/en/contributing/writing-for-github-docs/using-yaml-frontmatter
     const Meta = struct {
         title: []const u8,
         url: ?[]const u8,
@@ -37,14 +69,14 @@ const Links = std.StringHashMap(LinkValues);
 
 ///  Stores relationships between Pages
 const PageGraph = struct {
-    allocator: std.mem.Allocator,
+    allocator: mem.Allocator,
     pages: std.StringHashMap(Page),
     ///  What links page have
     forward: Links,
     //  Who links to that page
     backward: Links,
 
-    pub fn init(allocator: std.mem.Allocator) !PageGraph {
+    pub fn init(allocator: mem.Allocator) !PageGraph {
         const pages = std.StringHashMap(Page).init(allocator);
         const forward = Links.init(allocator);
         const backward = Links.init(allocator);
@@ -194,7 +226,6 @@ const RenderContext = struct {
 
         const backward_links = self.graph.backward.get(page);
         if (backward_links) |links| {
-            print("\t[{s}] Back links: {d}\n", .{ page, links.count() });
             if (links.count() > 0) {
                 try self.writeIndented("<h3>Back Links</h3>\n");
                 try self.writeOpen("<ul>");
@@ -211,8 +242,6 @@ const RenderContext = struct {
                 }
                 try self.writeClose("</ul>");
             }
-        } else {
-            print("\t[{s}] Back links: 0\n", .{page});
         }
         try self.writeClose("</footer>");
     }
@@ -644,10 +673,11 @@ fn text_impl(type_val: c.MD_TEXTTYPE, text_data: [*c]const c.MD_CHAR, size: c.MD
     try ctx.renderText(type_val, data);
 }
 
+/// Read note file, parse meta fields and run parser on the contents
 fn processFile(file_path: []const u8, config: *Config, parser: *const c.MD_PARSER, ctx: *RenderContext, html_index: usize) !void {
     const full_path = try std.fs.path.join(ctx.allocator, &[_][]const u8{ config.input_path, file_path });
     const file = std.fs.cwd().openFile(full_path, .{}) catch |err| {
-        print("Failed to read {s}, skipping\n", .{full_path});
+        log.err("Failed to read {s}, skipping\n", .{full_path});
         return err;
     };
 
@@ -684,8 +714,8 @@ fn processFile(file_path: []const u8, config: *Config, parser: *const c.MD_PARSE
 
     const out_path = try std.fmt.allocPrint(ctx.allocator, "{s}.html", .{name});
 
-    // std.log.debug("Parsed page: {s}, {s} -> {s}", .{ name, file_path, out_path });
-    const page = Page{
+    // log.debug("Parsed page: {s}, {s} -> {s}", .{ name, file_path, out_path });
+    var page = Page{
         .name = name,
         .path = file_path,
         .out_path = out_path,
@@ -697,6 +727,63 @@ fn processFile(file_path: []const u8, config: *Config, parser: *const c.MD_PARSE
         },
     };
 
+    // Process Frontmatter. We want to support at least Obsidian and GitHub style metadata.
+    //
+    // Obsidian
+    //
+    // https://help.obsidian.md/properties#Default+properties
+    // https://help.obsidian.md/publish/seo#Metadata
+    // https://help.obsidian.md/publish/permalinks
+    //
+    // Property            Type         Description
+    // ────────────────────────────────────────────
+    // tags                [][]const u8 List of tags
+    // aliases             [][]const u8 List of aliases
+    // cssclasses          [][]const u8 Allows you to style individual notes using CSS snippets.
+    // publish             bool         See Automatically select notes to publish.
+    // permalink           []const u8   See Permalinks.
+    // description         []const u8   See Description.
+    // image               []const u8   See Image.
+    // cover               []const u8   See Image.
+    //
+    // GitHub Pages
+    //
+    // https://docs.github.com/en/contributing/writing-for-github-docs/using-yaml-frontmatter
+    //
+    // Property            Type         Description
+    // ────────────────────────────────────────────
+    // versions
+    // redirect_from
+    // title
+    // shortTitle
+    // intro
+    // permissions
+    // product
+    // layout
+    // children
+    // childGroups
+    // featuredLinks
+    // showMiniToc
+    // allowTitleToDifferFromFilename
+    // changelog
+    // defaultPlatform
+    // defaultTool
+    // learningTracks
+    // includeGuides
+    // type
+    // topics
+    // communityRedirect
+    // effectiveDate
+
+    if (yaml_end > 0) {
+        try processFrontmatter(&page, buf[0..yaml_end], ctx.allocator);
+        if (page.meta.skip) {
+            log.debug("Skipping {s}...\n", .{page.name});
+            return;
+        }
+        // debugPrintPage(page);
+    }
+
     try ctx.graph.addPage(page);
     ctx.cur_page = page.name;
 
@@ -704,6 +791,46 @@ fn processFile(file_path: []const u8, config: *Config, parser: *const c.MD_PARSE
     try ctx.writeHtmlHead(page.meta.title);
     _ = c.md_parse(@ptrCast(&buf[yaml_end]), @intCast(bytes_read - yaml_end), parser, ctx);
     defer file.close();
+}
+
+fn debugPrintPage(page: Page) void {
+    inline for (std.meta.fields(@TypeOf(page.meta))) |field| {
+        const value = @field(page.meta, field.name);
+        print("{s}.{s}: ", .{ page.name, field.name });
+
+        switch (field.type) {
+            []const u8 => print("{s}\n", .{value}),
+            ?[]const u8 => {
+                if (value) |v| {
+                    print("{s}\n", .{v});
+                } else {
+                    print("null\n", .{});
+                }
+            },
+            bool => print("{}\n", .{value}),
+            []const []const u8 => {
+                print("[", .{});
+                for (value, 0..) |tag, i| {
+                    if (i > 0) print(", ", .{});
+                    print("{s}", .{tag});
+                }
+                print("]\n", .{});
+            },
+            else => @compileError("Unsupported field type"),
+        }
+    }
+}
+
+/// Parse frontmatter YAML and write values to Page fields
+fn processFrontmatter(page: *Page, yaml_in: []const u8, allocator: mem.Allocator) !void {
+    var yaml_parser: Yaml = .{ .source = yaml_in };
+    // Pages are not following any fixed schema so we won't try to parse them
+    // into a struct. Instead we attempt to parse fields important to us one by one.
+    try yaml_parser.load(allocator);
+    const map = yaml_parser.docs.items[0].map;
+    if (map.contains("title")) page.meta.title = try map.get("title").?.asString();
+    if (map.contains("draft")) page.meta.skip = try map.get("draft").?.asBool();
+    if (map.contains("publish")) page.meta.skip = !try map.get("publish").?.asBool();
 }
 
 const Config = struct {
@@ -782,10 +909,10 @@ pub fn main() !void {
 
     // Create output directory
     const dest_dir = std.fs.path.resolve(allocator, &[_][]const u8{config.output_path}) catch |err| {
-        print("Failed to resolve dest path: {any}\n", .{err});
+        std.log.err("Failed to resolve dest path: {any}\n", .{err});
         return err;
     };
-    print("Out dir is \"{s}\"\n", .{config.output_path});
+    std.log.info("Out dir is \"{s}\"\n", .{config.output_path});
     try std.fs.cwd().makePath(dest_dir);
 
     // Process files

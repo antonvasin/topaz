@@ -28,6 +28,10 @@
             .url = "https://github.com/mity/md4c/archive/refs/tags/release-0.5.2.tar.gz",
             .hash = "1220251028e2f8c9b08684c3a3fe1aa320751e48154ad57ebdf86857dbceeb25cbb5",
         },
+        .yaml = .{
+            .url = "https://github.com/kubkon/zig-yaml/archive/refs/tags/0.1.1.tar.gz",
+            .hash = "zig_yaml-0.1.0-C1161miEAgBCwL3YAEQZwV_4GyaaT2Xqj9nKB6hNe_TL",
+        },
     },
     .paths = .{
         "build.zig",

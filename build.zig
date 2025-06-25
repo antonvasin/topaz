@@ -32,6 +32,12 @@ pub fn build(b: *std.Build) void {
 
     exe.linkLibC();
 
+    const yaml = b.dependency("yaml", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("yaml", yaml.module("yaml"));
+
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
@@ -68,7 +74,7 @@ pub fn build(b: *std.Build) void {
 
     exe_unit_tests.root_module.addIncludePath(md4c.path("src"));
     exe_unit_tests.addIncludePath(md4c.path("src"));
-    exe_unit_tests.addCSourceFile(.{.file = md4c.path("src/md4c.c")});
+    exe_unit_tests.addCSourceFile(.{ .file = md4c.path("src/md4c.c") });
     exe_unit_tests.linkLibC();
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
