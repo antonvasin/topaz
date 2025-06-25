@@ -28,6 +28,10 @@ const Page = struct {
     html_index: usize,
     meta: Meta,
 
+    buf: []const u8,
+    markdown: []const u8,
+    frontmatter: ?[]const u8 = null,
+
     const Meta = struct {
         title: []const u8,
         url: ?[]const u8,
@@ -39,6 +43,116 @@ const Page = struct {
         link: []const u8,
         text: []const u8,
     };
+
+    pub fn init(allocator: mem.Allocator, file_path: []const u8, buf: []const u8) !Page {
+        // input_folder  /note-01           .md
+        // input_folder  /subfolder/note-02 .md
+        //
+        // [input_dir]   /      [name]      .md
+        // [outdir]      /      [name]      .html
+        const name = file_path[0 .. file_path.len - 3];
+        const out_path = try std.fmt.allocPrint(allocator, "{s}.html", .{name});
+
+        var yaml_end: usize = 0;
+
+        // Cutting out YAML frontmatter
+        if (mem.startsWith(u8, buf, "---\n")) {
+            var i: usize = 4;
+            while (i < buf.len - 3) {
+                if (mem.eql(u8, buf[i .. i + 4], "\n---")) {
+                    if (i + 4 >= buf.len or buf[i + 4] == '\n') {
+                        yaml_end = i + 4;
+                        break;
+                    }
+                }
+                i += 1;
+            }
+        }
+
+        const frontmatter = if (yaml_end > 0) buf[0..yaml_end] else null;
+
+        var meta = Page.Meta{
+            .title = name,
+            .skip = false,
+            .url = name,
+        };
+
+        if (frontmatter) |yml| {
+            // Process Frontmatter. We want to support at least Obsidian and GitHub style metadata.
+            //
+            // Obsidian
+            //
+            // https://help.obsidian.md/properties#Default+properties
+            // https://help.obsidian.md/publish/seo#Metadata
+            // https://help.obsidian.md/publish/permalinks
+            //
+            // Property            Type         Description
+            // ────────────────────────────────────────────
+            // tags                [][]const u8 List of tags
+            // aliases             [][]const u8 List of aliases
+            // cssclasses          [][]const u8 Allows you to style individual notes using CSS snippets.
+            // publish             bool         See Automatically select notes to publish.
+            // permalink           []const u8   See Permalinks.
+            // description         []const u8   See Description.
+            // image               []const u8   See Image.
+            // cover               []const u8   See Image.
+            //
+            // GitHub Pages
+            //
+            // https://docs.github.com/en/contributing/writing-for-github-docs/using-yaml-frontmatter
+            //
+            // Property            Type         Description
+            // ────────────────────────────────────────────
+            // versions
+            // redirect_from
+            // title
+            // shortTitle
+            // intro
+            // permissions
+            // product
+            // layout
+            // children
+            // childGroups
+            // featuredLinks
+            // showMiniToc
+            // allowTitleToDifferFromFilename
+            // changelog
+            // defaultPlatform
+            // defaultTool
+            // learningTracks
+            // includeGuides
+            // type
+            // topics
+            // communityRedirect
+            // effectiveDate
+
+            var yaml_parser: Yaml = .{ .source = yml };
+            // Pages are not following any fixed schema so we won't try to parse them
+            // into a struct. Instead we attempt to parse fields important to us one by one.
+            try yaml_parser.load(allocator);
+            // TODO: defer yaml_parser.deinit(allocator);
+            const map = yaml_parser.docs.items[0].map;
+            if (map.contains("title")) meta.title = try map.get("title").?.asString();
+            if (map.contains("draft")) meta.skip = try map.get("draft").?.asBool();
+            if (map.contains("publish")) meta.skip = !try map.get("publish").?.asBool();
+        }
+
+        return .{
+            .name = name,
+            .path = file_path,
+            .out_path = out_path,
+            .html_index = undefined,
+            .buf = buf,
+            .markdown = buf[yaml_end .. buf.len - 1],
+            .frontmatter = frontmatter,
+            .meta = meta,
+        };
+    }
+
+    pub fn deinit(self: *Page, allocator: mem.Allocator) void {
+        allocator.free(self.out_path);
+        allocator.free(self.buf);
+    }
 };
 
 const LinkValues = std.StringHashMap(Page.Link);
@@ -657,155 +771,24 @@ fn processFile(file_path: []const u8, config: *Config, parser: *const c.MD_PARSE
         log.err("Failed to read {s}, skipping\n", .{full_path});
         return err;
     };
-
-    const file_stat = try file.stat();
-    print("Processing {s} ({d}b)\n", .{ file_path, file_stat.size });
+    defer ctx.allocator.free(full_path);
 
     const file_size = try file.getEndPos();
-    var buf = try ctx.allocator.alloc(u8, file_size);
+    print("Processing {s} ({d}b)\n", .{ file_path, file_size });
+    const buf = try ctx.allocator.alloc(u8, file_size);
     errdefer ctx.allocator.free(buf);
-    const bytes_read = try file.readAll(buf);
-    var yaml_end: usize = 0;
+    _ = try file.readAll(buf);
 
-    // Cutting out YAML frontmatter
-    if (mem.startsWith(u8, buf, "---\n")) {
-        var i: usize = 4;
-        while (i < buf.len - 3) {
-            if (mem.eql(u8, buf[i .. i + 4], "\n---")) {
-                if (i + 4 >= buf.len or buf[i + 4] == '\n') {
-                    yaml_end = i + 4;
-                    break;
-                }
-            }
-            i += 1;
-        }
-    }
-
-    // input_folder  /note-01           .md
-    // input_folder  /subfolder/note-02 .md
-    //
-    // [input_dir]   /      [name]      .md
-    // [outdir]      /      [name]      .html
-
-    const name = file_path[0 .. file_path.len - 3];
-
-    const out_path = try std.fmt.allocPrint(ctx.allocator, "{s}.html", .{name});
-
-    // log.debug("Parsed page: {s}, {s} -> {s}", .{ name, file_path, out_path });
-    var page = Page{
-        .name = name,
-        .path = file_path,
-        .out_path = out_path,
-        .html_index = html_index,
-        .meta = .{
-            .title = name,
-            .skip = false,
-            .url = name,
-        },
-    };
-
-    if (yaml_end > 0) {
-        try processFrontmatter(&page, buf[0..yaml_end], ctx.allocator);
-        if (page.meta.skip) {
-            log.debug("Skipping {s}...\n", .{page.name});
-            return;
-        }
-        // debugPrintPage(page);
-    }
+    var page = try Page.init(ctx.allocator, file_path, buf);
+    page.html_index = html_index;
 
     try ctx.graph.addPage(page);
     ctx.cur_page = page.name;
 
     // Parse the markdown content
     try ctx.writeHtmlHead(page.meta.title);
-    _ = c.md_parse(@ptrCast(&buf[yaml_end]), @intCast(bytes_read - yaml_end), parser, ctx);
+    _ = c.md_parse(@ptrCast(page.markdown), @intCast(page.markdown.len), parser, ctx);
     defer file.close();
-}
-
-fn debugPrintPage(page: Page) void {
-    inline for (std.meta.fields(@TypeOf(page.meta))) |field| {
-        const value = @field(page.meta, field.name);
-        print("{s}.{s}: ", .{ page.name, field.name });
-
-        switch (field.type) {
-            []const u8 => print("{s}\n", .{value}),
-            ?[]const u8 => {
-                if (value) |v| {
-                    print("{s}\n", .{v});
-                } else {
-                    print("null\n", .{});
-                }
-            },
-            bool => print("{}\n", .{value}),
-            []const []const u8 => {
-                print("[", .{});
-                for (value, 0..) |tag, i| {
-                    if (i > 0) print(", ", .{});
-                    print("{s}", .{tag});
-                }
-                print("]\n", .{});
-            },
-            else => @compileError("Unsupported field type"),
-        }
-    }
-}
-
-// Process Frontmatter. We want to support at least Obsidian and GitHub style metadata.
-//
-// Obsidian
-//
-// https://help.obsidian.md/properties#Default+properties
-// https://help.obsidian.md/publish/seo#Metadata
-// https://help.obsidian.md/publish/permalinks
-//
-// Property            Type         Description
-// ────────────────────────────────────────────
-// tags                [][]const u8 List of tags
-// aliases             [][]const u8 List of aliases
-// cssclasses          [][]const u8 Allows you to style individual notes using CSS snippets.
-// publish             bool         See Automatically select notes to publish.
-// permalink           []const u8   See Permalinks.
-// description         []const u8   See Description.
-// image               []const u8   See Image.
-// cover               []const u8   See Image.
-//
-// GitHub Pages
-//
-// https://docs.github.com/en/contributing/writing-for-github-docs/using-yaml-frontmatter
-//
-// Property            Type         Description
-// ────────────────────────────────────────────
-// versions
-// redirect_from
-// title
-// shortTitle
-// intro
-// permissions
-// product
-// layout
-// children
-// childGroups
-// featuredLinks
-// showMiniToc
-// allowTitleToDifferFromFilename
-// changelog
-// defaultPlatform
-// defaultTool
-// learningTracks
-// includeGuides
-// type
-// topics
-// communityRedirect
-// effectiveDate
-fn processFrontmatter(page: *Page, yaml_in: []const u8, allocator: mem.Allocator) !void {
-    var yaml_parser: Yaml = .{ .source = yaml_in };
-    // Pages are not following any fixed schema so we won't try to parse them
-    // into a struct. Instead we attempt to parse fields important to us one by one.
-    try yaml_parser.load(allocator);
-    const map = yaml_parser.docs.items[0].map;
-    if (map.contains("title")) page.meta.title = try map.get("title").?.asString();
-    if (map.contains("draft")) page.meta.skip = try map.get("draft").?.asBool();
-    if (map.contains("publish")) page.meta.skip = !try map.get("publish").?.asBool();
 }
 
 const Config = struct {
