@@ -15,34 +15,11 @@ pub const std_options: std.Options = .{
     // Set the log level to info
     // .log_level = .info,
 
-    // Define logFn to override the std implementation
-    .logFn = myLogFn,
+    .log_scope_levels = &.{
+        .{ .scope = .parser, .level = .err },
+        .{ .scope = .tokenizer, .level = .err },
+    },
 };
-
-pub fn myLogFn(
-    comptime level: std.log.Level,
-    comptime scope: @Type(.enum_literal),
-    comptime format: []const u8,
-    args: anytype,
-) void {
-    // Ignore all non-error logging from sources other than
-    // .my_project, .nice_library and the default
-    const scope_prefix = "(" ++ switch (scope) {
-        .topaz, std.log.default_log_scope => @tagName(scope),
-        else => if (@intFromEnum(level) <= @intFromEnum(std.log.Level.err))
-            @tagName(scope)
-        else
-            return,
-    } ++ "): ";
-
-    const prefix = "[" ++ comptime level.asText() ++ "] " ++ scope_prefix;
-
-    // Print the message to stderr, silently ignoring any errors
-    std.debug.lockStdErr();
-    defer std.debug.unlockStdErr();
-    const stderr = std.io.getStdErr().writer();
-    nosuspend stderr.print(prefix ++ format ++ "\n", args) catch return;
-}
 
 const Page = struct {
     name: []const u8,
@@ -727,54 +704,6 @@ fn processFile(file_path: []const u8, config: *Config, parser: *const c.MD_PARSE
         },
     };
 
-    // Process Frontmatter. We want to support at least Obsidian and GitHub style metadata.
-    //
-    // Obsidian
-    //
-    // https://help.obsidian.md/properties#Default+properties
-    // https://help.obsidian.md/publish/seo#Metadata
-    // https://help.obsidian.md/publish/permalinks
-    //
-    // Property            Type         Description
-    // ────────────────────────────────────────────
-    // tags                [][]const u8 List of tags
-    // aliases             [][]const u8 List of aliases
-    // cssclasses          [][]const u8 Allows you to style individual notes using CSS snippets.
-    // publish             bool         See Automatically select notes to publish.
-    // permalink           []const u8   See Permalinks.
-    // description         []const u8   See Description.
-    // image               []const u8   See Image.
-    // cover               []const u8   See Image.
-    //
-    // GitHub Pages
-    //
-    // https://docs.github.com/en/contributing/writing-for-github-docs/using-yaml-frontmatter
-    //
-    // Property            Type         Description
-    // ────────────────────────────────────────────
-    // versions
-    // redirect_from
-    // title
-    // shortTitle
-    // intro
-    // permissions
-    // product
-    // layout
-    // children
-    // childGroups
-    // featuredLinks
-    // showMiniToc
-    // allowTitleToDifferFromFilename
-    // changelog
-    // defaultPlatform
-    // defaultTool
-    // learningTracks
-    // includeGuides
-    // type
-    // topics
-    // communityRedirect
-    // effectiveDate
-
     if (yaml_end > 0) {
         try processFrontmatter(&page, buf[0..yaml_end], ctx.allocator);
         if (page.meta.skip) {
@@ -821,7 +750,53 @@ fn debugPrintPage(page: Page) void {
     }
 }
 
-/// Parse frontmatter YAML and write values to Page fields
+// Process Frontmatter. We want to support at least Obsidian and GitHub style metadata.
+//
+// Obsidian
+//
+// https://help.obsidian.md/properties#Default+properties
+// https://help.obsidian.md/publish/seo#Metadata
+// https://help.obsidian.md/publish/permalinks
+//
+// Property            Type         Description
+// ────────────────────────────────────────────
+// tags                [][]const u8 List of tags
+// aliases             [][]const u8 List of aliases
+// cssclasses          [][]const u8 Allows you to style individual notes using CSS snippets.
+// publish             bool         See Automatically select notes to publish.
+// permalink           []const u8   See Permalinks.
+// description         []const u8   See Description.
+// image               []const u8   See Image.
+// cover               []const u8   See Image.
+//
+// GitHub Pages
+//
+// https://docs.github.com/en/contributing/writing-for-github-docs/using-yaml-frontmatter
+//
+// Property            Type         Description
+// ────────────────────────────────────────────
+// versions
+// redirect_from
+// title
+// shortTitle
+// intro
+// permissions
+// product
+// layout
+// children
+// childGroups
+// featuredLinks
+// showMiniToc
+// allowTitleToDifferFromFilename
+// changelog
+// defaultPlatform
+// defaultTool
+// learningTracks
+// includeGuides
+// type
+// topics
+// communityRedirect
+// effectiveDate
 fn processFrontmatter(page: *Page, yaml_in: []const u8, allocator: mem.Allocator) !void {
     var yaml_parser: Yaml = .{ .source = yaml_in };
     // Pages are not following any fixed schema so we won't try to parse them
