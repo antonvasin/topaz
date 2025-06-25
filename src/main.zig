@@ -75,7 +75,6 @@ const PageGraph = struct {
     }
 
     pub fn addLink(self: *PageGraph, page_name: []const u8, link: Page.Link) !void {
-        // if (!self.pages.contains(page_name)) try self.addPage(page_name);
         // TODO: we probably want to use real hashing function here
         const id = try std.fmt.allocPrint(self.allocator, "{s}{s}{any}", .{ page_name, link.link, link.text });
 
@@ -97,6 +96,7 @@ const PageGraph = struct {
 /// Context for building HTML string inside md4c callbacks
 const RenderContext = struct {
     allocator: mem.Allocator,
+    // TODO: read about using Writer
     buf: std.ArrayList(u8),
     image_nesting_level: u32 = 0,
     current_level: u32 = 0,
@@ -664,8 +664,12 @@ fn processFile(file_path: []const u8, config: *Config, parser: *const c.MD_PARSE
     if (mem.startsWith(u8, buf, "---\n")) {
         var i: usize = 4;
         while (i < buf.len - 3) {
-            // TODO: distinguish between YAML terminators and <hr />
-            if (mem.eql(u8, buf[i .. i + 4], "\n---")) yaml_end = i + 4;
+            if (mem.eql(u8, buf[i .. i + 4], "\n---")) {
+                if (i + 4 >= buf.len or buf[i + 4] == '\n') {
+                    yaml_end = i + 4;
+                    break;
+                }
+            }
             i += 1;
         }
     }
