@@ -25,7 +25,6 @@ const Page = struct {
     name: []const u8,
     path: []const u8,
     out_path: []const u8,
-    html_index: usize,
     meta: Meta,
 
     buf: []const u8,
@@ -141,7 +140,6 @@ const Page = struct {
             .name = name,
             .path = file_path,
             .out_path = out_path,
-            .html_index = undefined,
             .buf = buf,
             .markdown = buf[yaml_end .. buf.len - 1],
             .frontmatter = frontmatter,
@@ -161,19 +159,22 @@ const Links = std.StringHashMap(LinkValues);
 ///  Stores relationships between Pages
 const PageGraph = struct {
     allocator: mem.Allocator,
-    pages: std.StringHashMap(Page),
+    page_list: std.ArrayList(Page),
+    pages: std.StringHashMap(usize),
     ///  What links page have
     forward: Links,
     //  Who links to that page
     backward: Links,
 
     pub fn init(allocator: mem.Allocator) !PageGraph {
-        const pages = std.StringHashMap(Page).init(allocator);
+        const page_list = std.ArrayList(Page).init(allocator);
+        const pages = std.StringHashMap(usize).init(allocator);
         const forward = Links.init(allocator);
         const backward = Links.init(allocator);
 
         return .{
             .allocator = allocator,
+            .page_list = page_list,
             .pages = pages,
             .forward = forward,
             .backward = backward,
@@ -181,13 +182,16 @@ const PageGraph = struct {
     }
 
     pub fn deinit(self: *PageGraph) void {
+        self.page_list.deinit();
         self.pages.deinit();
         self.forward.deinit();
         self.backward.deinit();
     }
 
     pub fn addPage(self: *PageGraph, page: Page) !void {
-        try self.pages.put(page.name, page);
+        try self.page_list.append(page);
+        const index = self.page_list.items.len - 1;
+        try self.pages.put(page.name, index);
 
         if (!self.forward.contains(page.name)) {
             try self.forward.put(page.name, std.StringHashMap(Page.Link).init(self.allocator));
@@ -213,6 +217,16 @@ const PageGraph = struct {
             .text = page_name,
         };
         try backward_links_ptr.value_ptr.put(id, backward_link);
+    }
+
+    pub fn listPages(self: *PageGraph) void {
+        var iterator = self.pages.keyIterator();
+
+        var i: usize = 0;
+        while (iterator.next()) |k| {
+            log.debug("{2d} {s}\n", .{ i, k });
+            i += 1;
+        }
     }
 };
 
@@ -796,29 +810,26 @@ const Parser = struct {
     }
 };
 
-/// Parses a file into a Page
-fn processFile(file_path: []const u8, config: *Config, ctx: *RenderContext, html_index: usize) !Page {
-    const full_path = try std.fs.path.join(ctx.allocator, &[_][]const u8{ config.input_path, file_path });
+/// Read file from disk, parse metadata and add to graph
+fn processFile(allocator: mem.Allocator, file_path: []const u8, graph: *PageGraph, config: *Config) !void {
+    const full_path = try std.fs.path.join(allocator, &[_][]const u8{ config.input_path, file_path });
     const file = std.fs.cwd().openFile(full_path, .{}) catch |err| {
         log.err("Failed to read {s}, skipping\n", .{full_path});
         return err;
     };
-    defer ctx.allocator.free(full_path);
+    defer allocator.free(full_path);
 
     const file_size = try file.getEndPos();
     print("Processing {s} ({d}b)\n", .{ file_path, file_size });
-    const buf = try ctx.allocator.alloc(u8, file_size);
-    errdefer ctx.allocator.free(buf);
+    const buf = try allocator.alloc(u8, file_size);
+    errdefer allocator.free(buf);
     _ = try file.readAll(buf);
 
-    var page = try Page.init(ctx.allocator, file_path, buf);
-    page.html_index = html_index;
+    const page = try Page.init(allocator, file_path, buf);
 
-    try ctx.graph.addPage(page);
-    ctx.cur_page = page.name;
+    try graph.addPage(page);
 
     defer file.close();
-    return page;
 }
 
 const Config = struct {
@@ -892,19 +903,39 @@ pub fn main() !void {
     var graph = try PageGraph.init(allocator);
     var contexts = std.ArrayList(RenderContext).init(allocator);
 
-    for (input_files.items, 0..) |path, i| {
-        const ctx = try RenderContext.init(allocator, &graph);
+    // // First pass: read files into memory and parse metadata
+    // for (input_files.items, 0..) |path, i| {
+    //     const ctx = try RenderContext.init(allocator, &graph);
+    //     try contexts.append(ctx);
+    //     _ = try processFile(path, &config, &contexts.items[i], i);
+    // }
+
+    // // Second pass: parse markdown and index markup objects
+    // var parsed_pages = graph.pages.valueIterator();
+    // while (parsed_pages.next()) |page| {
+    //     try contexts.items[i].writeHtmlHead(page.meta.title);
+    //     parser.parse(page.markdown, &contexts.items[i]);
+    // }
+
+    // First pass: read files into memory and parse metadata
+    for (input_files.items) |path| {
+        var ctx = try RenderContext.init(allocator, &graph);
+        try processFile(allocator, path, &graph, &config);
+        const page_name = path[0 .. path.len - 3];
+        ctx.cur_page = page_name;
         try contexts.append(ctx);
-        const page = try processFile(path, &config, &contexts.items[i], i);
+    }
+
+    // Second pass: parse markdown and index blocks/links
+    for (graph.page_list.items, 0..) |*page, i| {
         try contexts.items[i].writeHtmlHead(page.meta.title);
         parser.parse(page.markdown, &contexts.items[i]);
     }
 
-    // Post processing, write header/footer and write to file
-    var pages = graph.pages.valueIterator();
-    while (pages.next()) |page| {
-        var ctx = &contexts.items[page.html_index];
-        ctx.cur_page = page.name;
+    // Third pass: write to disk
+    for (graph.page_list.items, 0..) |*page, i| {
+        log.debug("Writing {s}\n", .{page.out_path});
+        var ctx = &contexts.items[i];
         try ctx.writeFooter();
         try ctx.writeHtmlTail();
 
