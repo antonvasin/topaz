@@ -234,7 +234,34 @@ const PageGraph = struct {
     }
 };
 
-/// Context for building HTML string inside md4c callbacks
+/// Incrementally builds HTML string with correct indentation.
+/// Caller should not care about neither indentation nor newlines.
+///
+/// Calling this code:
+///
+///     try ctx.writeOpen("<p>");
+///     try ctx.writeString("Paragraph text");
+///     try ctx.writeString("<img src=\"\" />");
+///     try ctx.writeOpen("<ul>");
+///     try ctx.writeOpen("<li>");
+///     try ctx.writeString("List item");
+///     try ctx.writeClose("</li>");
+///     try ctx.writeClose("</ul>");
+///     try ctx.writeClose("</p>");
+///
+/// Produces this markup
+///
+///     <p>
+///         Paragraph text <img src="..." />
+///         <ul>
+///             <li>
+///                 List item
+///             </li>
+///             <li>
+///                 List item
+///             </li>
+///         </ul>
+///     </p>
 const RenderContext = struct {
     allocator: mem.Allocator,
     buf: std.ArrayList(u8),
@@ -246,6 +273,7 @@ const RenderContext = struct {
     current_level: u32 = 0,
 
     // For building internal links incrementally
+    // TODO: move to Parser
     cur_link_url: ?[]const u8 = null,
     cur_link_text: std.ArrayList(u8),
 
@@ -267,29 +295,48 @@ const RenderContext = struct {
     }
 
     /// Write text as is
-    pub fn write(self: *RenderContext, str: []const u8) !void {
+    fn write(self: *RenderContext, str: []const u8) !void {
         try self.buf.appendSlice(str);
     }
 
-    /// Write text at current level of indentation without newline
-    pub fn writeIndented(self: *RenderContext, str: []const u8) !void {
-        for (0..self.current_level) |_| try self.write("    ");
+    /// Write string with indentation
+    pub fn writeString(self: *RenderContext, str: []const u8) !void {
+        if (self.buf.getLastOrNull()) |last_char| {
+            if (last_char == '\n') try self.indent();
+        }
         try self.write(str);
     }
 
-    /// Write openning tag with indentation and newline at the end
-    pub fn writeOpen(self: *RenderContext, str: []const u8) !void {
+    fn indent(self: *RenderContext) !void {
         for (0..self.current_level) |_| try self.write("    ");
+    }
+
+    /// Write openning tag with indentation and newline
+    pub fn writeOpen(self: *RenderContext, str: []const u8) !void {
+        if (self.buf.getLastOrNull()) |last_char| {
+            if (last_char != '\n') {
+                try self.write("\n");
+                try self.indent();
+            }
+            if (last_char == '\n') try self.indent();
+        }
+
         try self.write(str);
         try self.write("\n");
         self.current_level += 1;
     }
 
-    /// Write closing tag with indentation and newline at the end
+    /// Write closing tag with indentation and newline
     pub fn writeClose(self: *RenderContext, str: []const u8) !void {
-        // assert(self.current_level > 0);
-        if (self.current_level > 0) self.current_level -= 1 else print("Lost indentation {s}\n", .{str});
-        for (0..self.current_level) |_| try self.write("    ");
+        assert(self.current_level > 0);
+        if (self.current_level > 0) self.current_level -= 1 else log.warn("Lost indentation {s}\n", .{str});
+        if (self.buf.getLastOrNull()) |last_char| {
+            if (last_char != '\n') {
+                try self.write("\n");
+                try self.indent();
+            }
+            if (last_char == '\n') try self.indent();
+        }
         try self.write(str);
         try self.write("\n");
     }
@@ -308,8 +355,8 @@ const RenderContext = struct {
         self.current_level = 2;
 
         var title_buf: [1024]u8 = undefined;
-        const title = try std.fmt.bufPrint(&title_buf, "<title>{s}</title>\n", .{page_title});
-        try self.writeIndented(title);
+        const title = try std.fmt.bufPrint(&title_buf, "<title>{s}</title>", .{page_title});
+        try self.writeString(title);
 
         try self.writeClose("</head>");
         try self.writeOpen("<body>");
@@ -326,17 +373,18 @@ const RenderContext = struct {
 
         try self.writeOpen("<footer>");
         if (forward_links.count() > 0) {
-            try self.writeIndented("<h3>Forward Links</h3>\n");
+            try self.writeString("<h3>Forward Links</h3>");
             try self.writeOpen("<ul>");
             var iterator = forward_links.valueIterator();
             while (iterator.next()) |link| {
                 try self.writeOpen("<li>");
 
-                try self.writeIndented("<a href=\"");
+                try self.writeString("<a href=\"");
                 try self.renderUrlEscaped(link.link);
-                try self.write(".html\">");
-                try self.write(link.text);
-                try self.write("</a>\n");
+                try self.writeString(".html\">");
+                try self.writeString(link.text);
+                try self.writeString("</a>\n");
+
                 try self.writeClose("</li>");
             }
             try self.writeClose("</ul>");
@@ -345,17 +393,17 @@ const RenderContext = struct {
         const backward_links = self.graph.backward.get(page);
         if (backward_links) |links| {
             if (links.count() > 0) {
-                try self.writeIndented("<h3>Back Links</h3>\n");
+                try self.writeString("<h3>Back Links</h3>");
                 try self.writeOpen("<ul>");
                 var iterator = links.valueIterator();
                 while (iterator.next()) |link| {
                     try self.writeOpen("<li>");
 
-                    try self.writeIndented("<a href=\"");
+                    try self.writeString("<a href=\"");
                     try self.renderUrlEscaped(link.link);
-                    try self.write(".html\">");
-                    try self.write(link.text);
-                    try self.write("</a>\n");
+                    try self.writeString(".html\">");
+                    try self.writeString(link.text);
+                    try self.writeString("</a>\n");
                     try self.writeClose("</li>");
                 }
                 try self.writeClose("</ul>");
@@ -365,11 +413,14 @@ const RenderContext = struct {
     }
 
     pub fn renderText(self: *RenderContext, text_type: c.MD_TEXTTYPE, data: []const u8) !void {
+        if (self.buf.getLastOrNull()) |last_char|
+            if (last_char == '\n') try self.indent();
+
         switch (text_type) {
             c.MD_TEXT_NULLCHAR => try self.renderUtf8Codepoint(0),
-            c.MD_TEXT_HTML => try self.write(data),
+            c.MD_TEXT_HTML => try self.writeString(data),
             c.MD_TEXT_ENTITY => try self.renderEntity(data),
-            c.MD_TEXT_CODE => try self.write(data),
+            c.MD_TEXT_CODE => try self.writeString(data),
             else => try self.renderHtmlEscaped(data),
         }
     }
@@ -405,7 +456,7 @@ const RenderContext = struct {
         }
 
         // Write named entity as is without checking
-        try self.write(data);
+        try self.writeString(data);
     }
 
     fn renderHtmlEscaped(self: *RenderContext, data: []const u8) !void {
@@ -589,7 +640,7 @@ const Parser = struct {
                     try ctx.writeOpen("<li>");
                 }
             },
-            c.MD_BLOCK_HR => try ctx.writeIndented("<hr>\n"),
+            c.MD_BLOCK_HR => try ctx.writeString("<hr>\n"),
             c.MD_BLOCK_H => {
                 const h_detail = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail)));
                 const level = h_detail.level;
@@ -600,15 +651,15 @@ const Parser = struct {
             c.MD_BLOCK_CODE => {
                 const code_detail = @as(*const c.MD_BLOCK_CODE_DETAIL, @ptrCast(@alignCast(detail)));
                 try ctx.writeOpen("<pre>");
-                try ctx.writeIndented("<code");
+                try ctx.writeString("<code");
 
                 if (code_detail.lang.text != null and code_detail.lang.size > 0) {
-                    try ctx.write(" class=\"language-");
+                    try ctx.writeString(" class=\"language-");
                     try ctx.renderHtmlEscaped(code_detail.lang.text[0..code_detail.lang.size]);
-                    try ctx.write("\"");
+                    try ctx.writeString("\"");
                 }
 
-                try ctx.write(">\n");
+                try ctx.writeString(">");
                 // TODO: handle in writer
                 ctx.current_level += 1;
             },
@@ -619,45 +670,45 @@ const Parser = struct {
             c.MD_BLOCK_TR => try ctx.writeOpen("<tr>"),
             c.MD_BLOCK_TH => {
                 const header_detail = @as(*const c.MD_BLOCK_TD_DETAIL, @ptrCast(@alignCast(detail)));
-                try ctx.writeIndented("<th");
+                try ctx.writeString("<th");
 
                 const alignment = @field(header_detail, "align");
                 if (alignment != c.MD_ALIGN_DEFAULT) {
-                    try ctx.write(" align=\"");
+                    try ctx.writeString(" align=\"");
 
                     switch (alignment) {
-                        c.MD_ALIGN_LEFT => try ctx.write("left"),
-                        c.MD_ALIGN_CENTER => try ctx.write("center"),
-                        c.MD_ALIGN_RIGHT => try ctx.write("right"),
+                        c.MD_ALIGN_LEFT => try ctx.writeString("left"),
+                        c.MD_ALIGN_CENTER => try ctx.writeString("center"),
+                        c.MD_ALIGN_RIGHT => try ctx.writeString("right"),
                         else => {},
                     }
 
-                    try ctx.write("\"");
+                    try ctx.writeString("\"");
                 }
 
-                try ctx.write(">\n");
+                try ctx.writeString(">\n");
                 // TODO: handle in writer
                 ctx.current_level += 1;
             },
             c.MD_BLOCK_TD => {
                 const cell_detail = @as(*const c.MD_BLOCK_TD_DETAIL, @ptrCast(@alignCast(detail)));
-                try ctx.writeIndented("<td");
+                try ctx.writeString("<td");
 
                 const alignment = @field(cell_detail, "align");
                 if (alignment != c.MD_ALIGN_DEFAULT) {
-                    try ctx.write(" align=\"");
+                    try ctx.writeString(" align=\"");
 
                     switch (alignment) {
-                        c.MD_ALIGN_LEFT => try ctx.write("left"),
-                        c.MD_ALIGN_CENTER => try ctx.write("center"),
-                        c.MD_ALIGN_RIGHT => try ctx.write("right"),
+                        c.MD_ALIGN_LEFT => try ctx.writeString("left"),
+                        c.MD_ALIGN_CENTER => try ctx.writeString("center"),
+                        c.MD_ALIGN_RIGHT => try ctx.writeString("right"),
                         else => {},
                     }
 
-                    try ctx.write("\"");
+                    try ctx.writeString("\"");
                 }
 
-                try ctx.write(">\n");
+                try ctx.writeString(">\n");
                 ctx.current_level += 1;
             },
             else => {},
@@ -696,7 +747,7 @@ const Parser = struct {
             },
             c.MD_BLOCK_CODE => {
                 try ctx.writeClose("</code>");
-                try ctx.writeClose("</pre>\n");
+                try ctx.writeClose("</pre>");
             },
             c.MD_BLOCK_P => try ctx.writeClose("</p>"),
             c.MD_BLOCK_TABLE => try ctx.writeClose("</table>"),
@@ -717,21 +768,21 @@ const Parser = struct {
 
     fn enter_span_impl(span: c.MD_SPANTYPE, detail: ?*anyopaque, ctx: *RenderContext) !void {
         switch (span) {
-            c.MD_SPAN_EM => try ctx.write("<em>"),
-            c.MD_SPAN_STRONG => try ctx.write("<strong>"),
+            c.MD_SPAN_EM => try ctx.writeString("<em>"),
+            c.MD_SPAN_STRONG => try ctx.writeString("<strong>"),
             c.MD_SPAN_A => {
                 const a_detail = @as(*const c.MD_SPAN_A_DETAIL, @ptrCast(@alignCast(detail)));
                 const href = a_detail.href.text[0..a_detail.href.size];
-                try ctx.write("<a href=\"");
+                try ctx.writeString("<a href=\"");
                 try ctx.renderUrlEscaped(href);
 
                 const has_title = a_detail.title.text != null and a_detail.title.size > 0;
                 if (has_title) {
-                    try ctx.write("\" title=\"");
+                    try ctx.writeString("\" title=\"");
                     try ctx.renderHtmlEscaped(a_detail.title.text[0..a_detail.title.size]);
                 }
 
-                try ctx.write("\">");
+                try ctx.writeString("\">");
 
                 // TODO: do not add links for ignored pages
                 if (ctx.cur_link_url == null) {
@@ -748,28 +799,28 @@ const Parser = struct {
                 ctx.image_nesting_level += 1;
 
                 const img_detail = @as(*const c.MD_SPAN_IMG_DETAIL, @ptrCast(@alignCast(detail)));
-                try ctx.write("<img src=\"");
+                try ctx.writeString("<img src=\"");
                 try ctx.renderUrlEscaped(img_detail.src.text[0..img_detail.src.size]);
 
                 if (img_detail.title.text != null and img_detail.title.size > 0) {
-                    try ctx.write("\" title=\"");
+                    try ctx.writeString("\" title=\"");
                     try ctx.renderHtmlEscaped(img_detail.title.text[0..img_detail.title.size]);
                 }
 
-                try ctx.write("\" alt=\"");
+                try ctx.writeString("\" alt=\"");
             },
-            c.MD_SPAN_CODE => try ctx.write("<code>"),
-            c.MD_SPAN_DEL => try ctx.write("<del>"),
-            c.MD_SPAN_U => try ctx.write("<u>"),
-            c.MD_SPAN_LATEXMATH => try ctx.write("<x-equation>"),
-            c.MD_SPAN_LATEXMATH_DISPLAY => try ctx.write("<x-equation type=\"display\">"),
+            c.MD_SPAN_CODE => try ctx.writeString("<code>"),
+            c.MD_SPAN_DEL => try ctx.writeString("<del>"),
+            c.MD_SPAN_U => try ctx.writeString("<u>"),
+            c.MD_SPAN_LATEXMATH => try ctx.writeString("<x-equation>"),
+            c.MD_SPAN_LATEXMATH_DISPLAY => try ctx.writeString("<x-equation type=\"display\">"),
             c.MD_SPAN_WIKILINK => {
                 // TODO: do not add links for ignored pages
                 const wikilink_detail = @as(*const c.MD_SPAN_WIKILINK_DETAIL, @ptrCast(@alignCast(detail)));
                 const target = wikilink_detail.target;
-                try ctx.write("<a href=\"");
+                try ctx.writeString("<a href=\"");
                 try ctx.renderUrlEscaped(target.text[0..target.size]);
-                try ctx.write(".html\">");
+                try ctx.writeString(".html\">");
                 ctx.cur_link_url = target.text[0..target.size];
             },
             else => {},
@@ -786,10 +837,10 @@ const Parser = struct {
         _ = detail;
 
         switch (span) {
-            c.MD_SPAN_EM => try ctx.write("</em>"),
-            c.MD_SPAN_STRONG => try ctx.write("</strong>"),
+            c.MD_SPAN_EM => try ctx.writeString("</em>"),
+            c.MD_SPAN_STRONG => try ctx.writeString("</strong>"),
             c.MD_SPAN_A => {
-                try ctx.write("</a>");
+                try ctx.writeString("</a>");
                 if (ctx.cur_link_url) |link_url| {
                     const link_text = try ctx.cur_link_text.toOwnedSlice();
                     const link = Page.Link{
@@ -801,17 +852,16 @@ const Parser = struct {
                 }
             },
             c.MD_SPAN_IMG => {
-                try ctx.write("\"");
-                try ctx.write(">");
+                try ctx.writeString("\">");
                 ctx.image_nesting_level -= 1;
             },
-            c.MD_SPAN_CODE => try ctx.write("</code>"),
-            c.MD_SPAN_DEL => try ctx.write("</del>"),
-            c.MD_SPAN_U => try ctx.write("</u>"),
-            c.MD_SPAN_LATEXMATH => try ctx.write("</x-equation>"),
-            c.MD_SPAN_LATEXMATH_DISPLAY => try ctx.write("</x-equation>"),
+            c.MD_SPAN_CODE => try ctx.writeString("</code>"),
+            c.MD_SPAN_DEL => try ctx.writeString("</del>"),
+            c.MD_SPAN_U => try ctx.writeString("</u>"),
+            c.MD_SPAN_LATEXMATH => try ctx.writeString("</x-equation>"),
+            c.MD_SPAN_LATEXMATH_DISPLAY => try ctx.writeString("</x-equation>"),
             c.MD_SPAN_WIKILINK => {
-                try ctx.write("</a>");
+                try ctx.writeString("</a>");
                 if (ctx.cur_link_url) |link_url| {
                     const link_text = try ctx.cur_link_text.toOwnedSlice();
                     const wikilink = Page.Link{
@@ -1025,14 +1075,17 @@ test "RenderContext" {
 
     try ctx.writeHtmlHead("Page Title");
     try ctx.writeOpen("<h1>");
-    try ctx.writeIndented("Page Title\n");
+    try ctx.writeString("Page ");
+    try ctx.writeString("<em>");
+    try ctx.writeString("Title");
+    try ctx.writeString("</em>");
     try ctx.writeClose("</h1>");
     try ctx.writeOpen("<p>");
-    try ctx.writeIndented("Paragraph text.\n");
+    try ctx.writeString("Paragraph text.");
     try ctx.writeOpen("<ul>");
     for (0..3) |_| {
         try ctx.writeOpen("<li>");
-        try ctx.writeIndented("List item\n");
+        try ctx.writeString("List item");
         try ctx.writeClose("</li>");
     }
     try ctx.writeClose("</ul>");
@@ -1049,7 +1102,7 @@ test "RenderContext" {
         \\    </head>
         \\    <body>
         \\        <h1>
-        \\            Page Title
+        \\            Page <em>Title</em>
         \\        </h1>
         \\        <p>
         \\            Paragraph text.

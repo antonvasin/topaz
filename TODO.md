@@ -20,7 +20,7 @@
 - [ ] Replace reserved chars with HTML entities
 - [ ] Render formulas with [KaTeX](https://github.com/KaTeX/KaTeX)
 - [ ] Write basic tests for md-html conversion
-- [/] Pretty print HTML
+- [x] Pretty print HTML
 - [ ] Embeds
 
 ## Sources/Indexing
