@@ -77,6 +77,8 @@ pub fn build(b: *std.Build) void {
     exe_unit_tests.addCSourceFile(.{ .file = md4c.path("src/md4c.c") });
     exe_unit_tests.linkLibC();
 
+    exe_unit_tests.root_module.addImport("yaml", yaml.module("yaml"));
+
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
     // Similar to creating the run step earlier, this exposes a `test` step to

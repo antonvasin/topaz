@@ -10,6 +10,7 @@ const print = std.debug.print;
 const log = std.log.scoped(.topaz);
 const mem = std.mem;
 const assert = std.debug.assert;
+const testing = std.testing;
 
 pub const std_options: std.Options = .{
     // Set the log level to info
@@ -71,7 +72,7 @@ const Page = struct {
         const frontmatter = if (yaml_end > 0) buf[0..yaml_end] else null;
 
         var meta = Page.Meta{
-            .title = name,
+            .title = try allocator.dupe(u8, name),
             .skip = false,
             .url = name,
         };
@@ -129,9 +130,12 @@ const Page = struct {
             // Pages are not following any fixed schema so we won't try to parse them
             // into a struct. Instead we attempt to parse fields important to us one by one.
             try yaml_parser.load(allocator);
-            // TODO: defer yaml_parser.deinit(allocator);
+            defer yaml_parser.deinit(allocator);
             const map = yaml_parser.docs.items[0].map;
-            if (map.contains("title")) meta.title = try map.get("title").?.asString();
+            if (map.contains("title")) {
+                allocator.free(meta.title);
+                meta.title = try allocator.dupe(u8, try map.get("title").?.asString());
+            }
             if (map.contains("draft")) meta.skip = try map.get("draft").?.asBool();
             if (map.contains("publish")) meta.skip = !try map.get("publish").?.asBool();
         }
@@ -149,7 +153,7 @@ const Page = struct {
 
     pub fn deinit(self: *Page, allocator: mem.Allocator) void {
         allocator.free(self.out_path);
-        allocator.free(self.buf);
+        allocator.free(self.meta.title);
     }
 };
 
@@ -971,15 +975,40 @@ pub fn main() !void {
     }
 }
 
-// test "simple test" {
-//     var list = std.ArrayList(i32).init(std.testing.allocator);
-//     defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
-//     try list.append(42);
-//     try std.testing.expectEqual(@as(i32, 42), list.pop());
-// }
+test "Page" {
+    const allocator = std.testing.allocator;
 
-// test "fuzz example" {
-//     // Try passing `--fuzz` to `zig build` and see if it manages to fail this test case!
-//     const input_bytes = std.testing.fuzzInput(.{});
-//     try std.testing.expect(!mem.eql(u8, "canyoufindme", input_bytes));
-// }
+    {
+        const buf: []const u8 =
+            \\---
+            \\title: "Note Title"
+            \\---
+            \\
+            \\# Note
+            \\
+            \\Paragraph text
+        ;
+        var page = try Page.init(allocator, "note.md", buf);
+        defer page.deinit(allocator);
+        try testing.expect(mem.eql(u8, page.name, "note"));
+        try testing.expect(mem.eql(u8, page.meta.title, "Note Title"));
+        try testing.expect(page.meta.skip == false);
+    }
+
+    {
+        const buf: []const u8 =
+            \\---
+            \\title: "Note Title"
+            \\draft: true
+            \\---
+            \\
+            \\# Note
+            \\
+            \\Paragraph text
+        ;
+
+        var page = try Page.init(allocator, "note.md", buf);
+        defer page.deinit(allocator);
+        try testing.expect(page.meta.skip == true);
+    }
+}

@@ -45,3 +45,4 @@
 
 - [x] Pass sources via args
 - [x] Pass output dir via args
+- [ ] Tests for rendered HTML pages
