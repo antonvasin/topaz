@@ -2,7 +2,7 @@
 
 ## Posts so far
 
-- [post 1](/blog/post1)
-- [post 2](/blog/post2)
-- [post 3](/blog/post3)
-- [post 4](/blog/subfodler/post4)
+- [post 1](/blog/post1.md)
+- [post 2](/blog/post2.md)
+- [post 3](/blog/post3.md)
+- [post 4](/blog/subfolder/post4.md)

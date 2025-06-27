@@ -224,7 +224,7 @@ const PageGraph = struct {
 
         var i: usize = 0;
         while (iterator.next()) |k| {
-            log.debug("{2d} {s}\n", .{ i, k });
+            log.debug("{d} {s}\n", .{ i, k.* });
             i += 1;
         }
     }
@@ -241,20 +241,25 @@ const RenderContext = struct {
     image_nesting_level: u32 = 0,
     current_level: u32 = 0,
 
-    cur_wikilink_link: ?Page.Link = null,
+    // For building internal links incrementally
+    cur_link_url: ?[]const u8 = null,
+    cur_link_text: std.ArrayList(u8),
 
     pub fn init(allocator: mem.Allocator, graph: *PageGraph) !RenderContext {
         const buf = std.ArrayList(u8).init(allocator);
+        const link_text = std.ArrayList(u8).init(allocator);
 
         return .{
             .buf = buf,
             .allocator = allocator,
             .graph = graph,
+            .cur_link_text = link_text,
         };
     }
 
     pub fn deinit(self: *RenderContext) void {
         self.buf.deinit();
+        self.cur_link_text.deinit();
     }
 
     pub fn write(self: *RenderContext, str: []const u8) !void {
@@ -707,17 +712,29 @@ const Parser = struct {
             c.MD_SPAN_EM => try ctx.write("<em>"),
             c.MD_SPAN_STRONG => try ctx.write("<strong>"),
             c.MD_SPAN_A => {
-                // TODO: check if it's a link to a page, that this page exists and is not ignored and add .html
                 const a_detail = @as(*const c.MD_SPAN_A_DETAIL, @ptrCast(@alignCast(detail)));
+                const href = a_detail.href.text[0..a_detail.href.size];
                 try ctx.write("<a href=\"");
-                try ctx.renderUrlEscaped(a_detail.href.text[0..a_detail.href.size]);
+                try ctx.renderUrlEscaped(href);
 
-                if (a_detail.title.text != null and a_detail.title.size > 0) {
+                const has_title = a_detail.title.text != null and a_detail.title.size > 0;
+                if (has_title) {
                     try ctx.write("\" title=\"");
                     try ctx.renderHtmlEscaped(a_detail.title.text[0..a_detail.title.size]);
                 }
 
                 try ctx.write("\">");
+
+                // TODO: do not add links for ignored pages
+                if (ctx.cur_link_url == null) {
+                    var page_link = href;
+                    if (mem.startsWith(u8, href, "/")) page_link = page_link[1..];
+                    if (mem.endsWith(u8, href, ".md")) page_link = page_link[0 .. page_link.len - 3];
+                    if (ctx.graph.pages.contains(page_link)) {
+                        log.debug("Markdown link to note page {s} from {s}\n", .{ page_link, ctx.cur_page });
+                        ctx.cur_link_url = page_link;
+                    }
+                }
             },
             c.MD_SPAN_IMG => {
                 ctx.image_nesting_level += 1;
@@ -739,16 +756,13 @@ const Parser = struct {
             c.MD_SPAN_LATEXMATH => try ctx.write("<x-equation>"),
             c.MD_SPAN_LATEXMATH_DISPLAY => try ctx.write("<x-equation type=\"display\">"),
             c.MD_SPAN_WIKILINK => {
-                // TODO: check if page exists and is not ignored
+                // TODO: do not add links for ignored pages
                 const wikilink_detail = @as(*const c.MD_SPAN_WIKILINK_DETAIL, @ptrCast(@alignCast(detail)));
                 const target = wikilink_detail.target;
                 try ctx.write("<a href=\"");
                 try ctx.renderUrlEscaped(target.text[0..target.size]);
                 try ctx.write(".html\">");
-                ctx.cur_wikilink_link = Page.Link{
-                    .link = try ctx.allocator.dupe(u8, target.text[0..target.size]),
-                    .text = undefined,
-                };
+                ctx.cur_link_url = target.text[0..target.size];
             },
             else => {},
         }
@@ -766,7 +780,18 @@ const Parser = struct {
         switch (span) {
             c.MD_SPAN_EM => try ctx.write("</em>"),
             c.MD_SPAN_STRONG => try ctx.write("</strong>"),
-            c.MD_SPAN_A => try ctx.write("</a>"),
+            c.MD_SPAN_A => {
+                try ctx.write("</a>");
+                if (ctx.cur_link_url) |link_url| {
+                    const link_text = try ctx.cur_link_text.toOwnedSlice();
+                    const link = Page.Link{
+                        .link = link_url,
+                        .text = link_text,
+                    };
+                    try ctx.graph.addLink(ctx.cur_page, link);
+                    ctx.cur_link_url = null;
+                }
+            },
             c.MD_SPAN_IMG => {
                 try ctx.write("\"");
                 try ctx.write(">");
@@ -779,9 +804,14 @@ const Parser = struct {
             c.MD_SPAN_LATEXMATH_DISPLAY => try ctx.write("</x-equation>"),
             c.MD_SPAN_WIKILINK => {
                 try ctx.write("</a>");
-                if (ctx.cur_wikilink_link) |cur_wikilink| {
-                    try ctx.graph.addLink(ctx.cur_page, cur_wikilink);
-                    ctx.cur_wikilink_link = null;
+                if (ctx.cur_link_url) |link_url| {
+                    const link_text = try ctx.cur_link_text.toOwnedSlice();
+                    const wikilink = Page.Link{
+                        .link = link_url,
+                        .text = link_text,
+                    };
+                    try ctx.graph.addLink(ctx.cur_page, wikilink);
+                    ctx.cur_link_url = null;
                 }
             },
             else => {},
@@ -795,15 +825,15 @@ const Parser = struct {
     }
 
     fn text_impl(type_val: c.MD_TEXTTYPE, text_data: [*c]const c.MD_CHAR, size: c.MD_SIZE, ctx: *RenderContext) !void {
-        const data = text_data[0..size];
-
         // Skip image alt text rendering when inside an image, as it's handled separately
         if (ctx.image_nesting_level > 0 and type_val != c.MD_TEXT_NULLCHAR) {
             return;
         }
 
-        if (ctx.cur_wikilink_link) |*wikilink| {
-            wikilink.text = try ctx.allocator.dupe(u8, data);
+        const data = text_data[0..size];
+
+        if (ctx.cur_link_url != null) {
+            try ctx.cur_link_text.appendSlice(data);
         }
 
         try ctx.renderText(type_val, data);
@@ -903,37 +933,25 @@ pub fn main() !void {
     var graph = try PageGraph.init(allocator);
     var contexts = std.ArrayList(RenderContext).init(allocator);
 
-    // // First pass: read files into memory and parse metadata
-    // for (input_files.items, 0..) |path, i| {
-    //     const ctx = try RenderContext.init(allocator, &graph);
-    //     try contexts.append(ctx);
-    //     _ = try processFile(path, &config, &contexts.items[i], i);
-    // }
-
-    // // Second pass: parse markdown and index markup objects
-    // var parsed_pages = graph.pages.valueIterator();
-    // while (parsed_pages.next()) |page| {
-    //     try contexts.items[i].writeHtmlHead(page.meta.title);
-    //     parser.parse(page.markdown, &contexts.items[i]);
-    // }
-
     // First pass: read files into memory and parse metadata
     for (input_files.items) |path| {
-        var ctx = try RenderContext.init(allocator, &graph);
         try processFile(allocator, path, &graph, &config);
         const page_name = path[0 .. path.len - 3];
+        var ctx = try RenderContext.init(allocator, &graph);
         ctx.cur_page = page_name;
         try contexts.append(ctx);
     }
 
     // Second pass: parse markdown and index blocks/links
     for (graph.page_list.items, 0..) |*page, i| {
+        if (page.meta.skip) continue;
         try contexts.items[i].writeHtmlHead(page.meta.title);
         parser.parse(page.markdown, &contexts.items[i]);
     }
 
     // Third pass: write to disk
     for (graph.page_list.items, 0..) |*page, i| {
+        if (page.meta.skip) continue;
         log.debug("Writing {s}\n", .{page.out_path});
         var ctx = &contexts.items[i];
         try ctx.writeFooter();

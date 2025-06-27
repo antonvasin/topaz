@@ -7,6 +7,7 @@
 - [x] Process Wiki-style links
 - [ ] Add tests for [Git book](https://github.com/progit/progit/tree/master/en)
 - [ ] Add tests for Obsidian vault
+- [x] Extensionless links
 
 ## HTML
 
@@ -20,7 +21,7 @@
 - [ ] Render formulas with [KaTeX](https://github.com/KaTeX/KaTeX)
 - [ ] Write basic tests for md-html conversion
 - [/] Pretty print HTML
-- [ ] Extensionless links
+- [ ] Embeds
 
 ## Sources/Indexing
 
