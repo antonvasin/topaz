@@ -86,16 +86,16 @@ const Page = struct {
             // https://help.obsidian.md/publish/seo#Metadata
             // https://help.obsidian.md/publish/permalinks
             //
-            // Property            Type         Description
-            // ────────────────────────────────────────────
-            // tags                [][]const u8 List of tags
-            // aliases             [][]const u8 List of aliases
-            // cssclasses          [][]const u8 Allows you to style individual notes using CSS snippets.
-            // publish             bool         See Automatically select notes to publish.
-            // permalink           []const u8   See Permalinks.
-            // description         []const u8   See Description.
-            // image               []const u8   See Image.
-            // cover               []const u8   See Image.
+            // Property            Type                  Description
+            // ─────────────────────────────────────────────────────
+            // tags                List of strings       List of tags
+            // aliases             List of strings       List of aliases
+            // cssclasses          List of strings       Allows you to style individual notes using CSS snippets.
+            // publish             Boolean               See Automatically select notes to publish.
+            // permalink           List of strings       See Permalinks.
+            // description         List of strings       See Description.
+            // image               List of strings       See Image.
+            // cover               List of strings       See Image.
             //
             // GitHub Pages
             //
@@ -266,15 +266,18 @@ const RenderContext = struct {
         self.cur_link_text.deinit();
     }
 
+    /// Write text as is
     pub fn write(self: *RenderContext, str: []const u8) !void {
         try self.buf.appendSlice(str);
     }
 
+    /// Write text at current level of indentation without newline
     pub fn writeIndented(self: *RenderContext, str: []const u8) !void {
         for (0..self.current_level) |_| try self.write("    ");
         try self.write(str);
     }
 
+    /// Write openning tag with indentation and newline at the end
     pub fn writeOpen(self: *RenderContext, str: []const u8) !void {
         for (0..self.current_level) |_| try self.write("    ");
         try self.write(str);
@@ -282,6 +285,7 @@ const RenderContext = struct {
         self.current_level += 1;
     }
 
+    /// Write closing tag with indentation and newline at the end
     pub fn writeClose(self: *RenderContext, str: []const u8) !void {
         // assert(self.current_level > 0);
         if (self.current_level > 0) self.current_level -= 1 else print("Lost indentation {s}\n", .{str});
@@ -992,16 +996,15 @@ test "Page" {
         defer page.deinit(allocator);
         try testing.expect(mem.eql(u8, page.name, "note"));
         try testing.expect(mem.eql(u8, page.meta.title, "Note Title"));
-        try testing.expect(page.meta.skip == false);
+        try testing.expectEqual(page.meta.skip, false);
     }
 
     {
         const buf: []const u8 =
             \\---
             \\title: "Note Title"
-            \\draft: true
+            \\publish: false
             \\---
-            \\
             \\# Note
             \\
             \\Paragraph text
@@ -1009,6 +1012,66 @@ test "Page" {
 
         var page = try Page.init(allocator, "note.md", buf);
         defer page.deinit(allocator);
-        try testing.expect(page.meta.skip == true);
+        try testing.expectEqual(page.meta.skip, true);
     }
+}
+
+test "RenderContext" {
+    const allocator = std.testing.allocator;
+
+    var graph = try PageGraph.init(allocator);
+    var ctx = try RenderContext.init(allocator, &graph);
+    defer ctx.deinit();
+
+    try ctx.writeHtmlHead("Page Title");
+    try ctx.writeOpen("<h1>");
+    try ctx.writeIndented("Page Title\n");
+    try ctx.writeClose("</h1>");
+    try ctx.writeOpen("<p>");
+    try ctx.writeIndented("Paragraph text.\n");
+    try ctx.writeOpen("<ul>");
+    for (0..3) |_| {
+        try ctx.writeOpen("<li>");
+        try ctx.writeIndented("List item\n");
+        try ctx.writeClose("</li>");
+    }
+    try ctx.writeClose("</ul>");
+    try ctx.writeClose("</p>");
+    try ctx.writeHtmlTail();
+
+    const buf =
+        \\<!DOCTYPE html>
+        \\<html>
+        \\    <head>
+        \\        <meta name="generator" content="topaz">
+        \\        <meta charset="UTF-8">
+        \\        <title>Page Title</title>
+        \\    </head>
+        \\    <body>
+        \\        <h1>
+        \\            Page Title
+        \\        </h1>
+        \\        <p>
+        \\            Paragraph text.
+        \\            <ul>
+        \\                <li>
+        \\                    List item
+        \\                </li>
+        \\                <li>
+        \\                    List item
+        \\                </li>
+        \\                <li>
+        \\                    List item
+        \\                </li>
+        \\            </ul>
+        \\        </p>
+        \\    </body>
+        \\</html>
+        \\
+    ;
+
+    testing.expect(mem.eql(u8, ctx.buf.items, buf)) catch |err| {
+        print("\n\ngot:\n{s}\n\n\nexpected:\n{s}\n", .{ ctx.buf.items, buf });
+        return err;
+    };
 }
