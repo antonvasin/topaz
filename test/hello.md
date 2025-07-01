@@ -1,62 +1,27 @@
 ---
 title: "Layout Test"
 description: "Lorem ipsum dolor sit amet"
-pubDate: "Jul 02 2022"
+created_at: "2022-07-02"
 heroImage: "/placeholder-hero.jpg"
 ---
 
 # Heading 1
 
-Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim
-labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi
-anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est
-aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia
-
-Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim
-labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi
-anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est
-aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia
-
-## Heading 2
-
 Привет!
-
-### Heading 3
-
-你好！
-
-#### Heading 4
 
 Olá!
 
+你好！
+
+## Heading 2
+
+### Heading 3
+
+#### Heading 4
+
 ##### Heading 5
 
-![./public/Sea_Otter_(Enhydra_lutris)_(25169790524)_crop.jpg]
-
 ###### Heading 6
-
-pariatur ut officia. Sit irure elit esse ea nulla sunt ex occaecat reprehenderit
-commodo officia dolor Lorem duis laboris cupidatat officia voluptate. Culpa
-proident adipisicing id nulla nisi laboris ex in Lorem sunt duis officia
-eiusmod. Aliqua reprehenderit commodo ex non excepteur duis sunt velit enim.
-Voluptate laboris sint cupidatat ullamco ut ea consectetur et est culpa et culpa
-duis.
-
-> Consectetur voluptate quae distinctio perspiciatis ipsa itaque Praesentium
-> iure inventore excepturi soluta aliquam. Quis perferendis dolorum vel neque
-> dolore laudantium quaerat obcaecati? Commodi nulla itaque blanditiis ullam aut
-> Aliquid vel nulla repudiandae nesciunt nulla similique Aspernatur ipsum
-> laudantium esse modi ipsa voluptatem a ad odio ab ipsam veritatis cupiditate
-> Earum laboriosam asperiores omnis molestiae veritatis Nostrum doloribus cumque
-> rerum omnis ut, dolorem sed. Nemo molestias cum deserunt placeat accusamus?
-> Error molestiae
-
-## Basic Formatting
-
-This is **bold text** and this is *italic text*.
-This is ***bold and italic text***.
-This is `inline code` and [this is a link](https://example.com).
-This is ~~strikethrough text~~.
 
 ## Lists
 
@@ -73,13 +38,44 @@ This is ~~strikethrough text~~.
 - [x] Eat porridge
 - [ ] Go for a walk
 
-## Links
+## Links {#links}
 
 - [Regular link](https://antonvasin.com)
 - [Link with query params](https://domain.com?name=anton)
 - [Link with array query](https://domain.com?name[]=anton&name[]=anna)
 - Wikilink to [[blog]]
 - [[blog|Custom wikilink text]]
+
+## Header _with_ **formatting**
+
+Pariatur ut officia. Sit irure elit esse ea nulla sunt ex occaecat reprehenderit
+commodo officia dolor Lorem duis laboris cupidatat officia voluptate. Culpa
+proident adipisicing id nulla nisi laboris ex in Lorem sunt duis officia
+eiusmod. Aliqua reprehenderit commodo ex non excepteur duis sunt velit enim.
+Voluptate laboris sint cupidatat ullamco ut ea consectetur et est culpa et culpa
+duis.
+
+![./public/Sea_Otter_(Enhydra_lutris)_(25169790524)_crop.jpg]
+
+> Consectetur voluptate quae distinctio perspiciatis ipsa itaque Praesentium
+> iure inventore excepturi soluta aliquam. Quis perferendis dolorum vel neque
+> dolore laudantium quaerat obcaecati? Commodi nulla itaque blanditiis ullam aut
+> Aliquid vel nulla repudiandae nesciunt nulla similique Aspernatur ipsum
+> laudantium esse modi ipsa voluptatem a ad odio ab ipsam veritatis cupiditate
+> Earum laboriosam asperiores omnis molestiae veritatis Nostrum doloribus cumque
+> rerum omnis ut, dolorem sed. Nemo molestias cum deserunt placeat accusamus?
+> Error molestiae
+
+
+Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim
+labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi
+anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est
+aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia
+
+Lorem ipsum dolor sit amet, officia excepteur ex fugiat reprehenderit enim
+labore culpa sint ad nisi Lorem pariatur mollit ex esse exercitation amet. Nisi
+anim cupidatat excepteur officia. Reprehenderit nostrud nostrud ipsum Lorem est
+aliquip amet voluptate voluptate dolor minim nulla est proident. Nostrud officia
 
 ---
 

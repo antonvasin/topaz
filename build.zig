@@ -38,6 +38,14 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addImport("yaml", yaml.module("yaml"));
 
+    const anyascii = b.dependency("anyascii", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addIncludePath(anyascii.path("impl/c"));
+    exe.addIncludePath(anyascii.path("impl/c"));
+    exe.addCSourceFile(.{ .file = anyascii.path("impl/c/anyascii.c") });
+
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
@@ -78,6 +86,10 @@ pub fn build(b: *std.Build) void {
     exe_unit_tests.linkLibC();
 
     exe_unit_tests.root_module.addImport("yaml", yaml.module("yaml"));
+
+    exe_unit_tests.root_module.addIncludePath(anyascii.path("impl/c"));
+    exe_unit_tests.addIncludePath(anyascii.path("impl/c"));
+    exe_unit_tests.addCSourceFile(.{ .file = anyascii.path("impl/c/anyascii.c") });
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 

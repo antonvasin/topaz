@@ -15,7 +15,8 @@
       "Bash(zig run:*)",
       "Bash(zig test:*)",
       "Bash(rg:*)",
-      "Bash(./test.sh)"
+      "Bash(./test.sh)",
+      "Bash(zig fetch:*)"
     ],
     "deny": []
   }

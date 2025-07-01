@@ -5,6 +5,7 @@ const c = @cImport({
 });
 const yaml = @import("yaml");
 const Yaml = yaml.Yaml;
+const anyascii = @import("anyascii.zig");
 
 const print = std.debug.print;
 const log = std.log.scoped(.topaz);
@@ -42,6 +43,37 @@ const Page = struct {
     const Link = struct {
         link: []const u8,
         text: []const u8,
+    };
+
+    const HeaderLevel = enum(u3) {
+        h1 = 1,
+        h2 = 2,
+        h3 = 3,
+        h4 = 4,
+        h5 = 5,
+        h6 = 6,
+
+        pub fn fromInt(level: u8) HeaderLevel {
+            return switch (level) {
+                1 => .h1,
+                2 => .h2,
+                3 => .h3,
+                4 => .h4,
+                5 => .h5,
+                6 => .h6,
+                else => .h6,
+            };
+        }
+
+        pub fn toInt(self: HeaderLevel) u8 {
+            return @intFromEnum(self);
+        }
+    };
+
+    const Header = struct {
+        text: []const u8,
+        id: []const u8,
+        level: HeaderLevel,
     };
 
     pub fn init(allocator: mem.Allocator, file_path: []const u8, buf: []const u8) !Page {
@@ -170,11 +202,18 @@ const PageGraph = struct {
     //  Who links to that page
     backward: Links,
 
+    // We store list headers inside hash map which maps page to a list of header ids
+    headers_lists: std.StringHashMap(std.ArrayList([]const u8)),
+    // Page headers by id
+    headers: std.StringHashMap(Page.Header),
+
     pub fn init(allocator: mem.Allocator) !PageGraph {
         const page_list = std.ArrayList(Page).init(allocator);
         const pages = std.StringHashMap(usize).init(allocator);
         const forward = Links.init(allocator);
         const backward = Links.init(allocator);
+        const headers_lists = std.StringHashMap(std.ArrayList([]const u8)).init(allocator);
+        const headers = std.StringHashMap(Page.Header).init(allocator);
 
         return .{
             .allocator = allocator,
@@ -182,6 +221,8 @@ const PageGraph = struct {
             .pages = pages,
             .forward = forward,
             .backward = backward,
+            .headers_lists = headers_lists,
+            .headers = headers,
         };
     }
 
@@ -190,6 +231,8 @@ const PageGraph = struct {
         self.pages.deinit();
         self.forward.deinit();
         self.backward.deinit();
+        self.headers_lists.deinit();
+        self.headers.deinit();
     }
 
     pub fn addPage(self: *PageGraph, page: Page) !void {
@@ -228,11 +271,47 @@ const PageGraph = struct {
 
         var i: usize = 0;
         while (iterator.next()) |k| {
-            log.debug("{d} {s}\n", .{ i, k.* });
+            log.debug("{d} {s}", .{ i, k.* });
             i += 1;
         }
     }
+
+    pub fn addHeader(self: *PageGraph, page_name: []const u8, header: Page.Header) !void {
+        log.debug("[{s}] Adding header h{d} #{s} \"{s}\"", .{ page_name, header.level.toInt(), header.id, header.text });
+
+        try self.headers.put(header.id, header);
+
+        const headers_list = try self.headers_lists.getOrPut(page_name);
+        if (!headers_list.found_existing) {
+            headers_list.value_ptr.* = std.ArrayList([]const u8).init(self.allocator);
+        }
+        try headers_list.value_ptr.append(header.id);
+    }
 };
+
+fn toSlug(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
+    const ascii = try anyascii.transliterate(allocator, text);
+    defer allocator.free(ascii);
+
+    var slug = std.ArrayList(u8).init(allocator);
+
+    var need_dash = false;
+    var started = false;
+    for (ascii) |char| {
+        const ch = std.ascii.toLower(char);
+        if (std.ascii.isAlphanumeric(ch)) {
+            if (!started) started = true;
+            if (need_dash) {
+                try slug.append('-');
+                need_dash = false;
+            }
+            try slug.append(ch);
+        } else if (!need_dash and started)
+            need_dash = true;
+    }
+
+    return try slug.toOwnedSlice();
+}
 
 /// Incrementally builds HTML string with correct indentation.
 /// Caller should not care about neither indentation nor newlines.
@@ -277,21 +356,27 @@ const RenderContext = struct {
     cur_link_url: ?[]const u8 = null,
     cur_link_text: std.ArrayList(u8),
 
+    cur_header_text: std.ArrayList(u8),
+    cur_header_level: ?Page.HeaderLevel = null,
+
     pub fn init(allocator: mem.Allocator, graph: *PageGraph) !RenderContext {
         const buf = std.ArrayList(u8).init(allocator);
         const link_text = std.ArrayList(u8).init(allocator);
+        const header_text = std.ArrayList(u8).init(allocator);
 
         return .{
             .buf = buf,
             .allocator = allocator,
             .graph = graph,
             .cur_link_text = link_text,
+            .cur_header_text = header_text,
         };
     }
 
     pub fn deinit(self: *RenderContext) void {
         self.buf.deinit();
         self.cur_link_text.deinit();
+        self.cur_header_text.deinit();
     }
 
     /// Write text as is
@@ -304,6 +389,7 @@ const RenderContext = struct {
         if (self.buf.getLastOrNull()) |last_char| {
             if (last_char == '\n') try self.indent();
         }
+        // TODO: write to buffer automatically when calling from header tags
         try self.write(str);
     }
 
@@ -367,11 +453,31 @@ const RenderContext = struct {
         try self.writeClose("</html>");
     }
 
+    pub fn writeTableOfContents(self: *RenderContext) !void {
+        try self.writeOpen("<section>");
+        try self.writeString("<h3>Table of contents");
+        try self.writeOpen("<ol>");
+        const headers_list = self.graph.headers_lists.get(self.cur_page) orelse return error.MissingHeaders;
+        for (headers_list.items) |header_id| {
+            const header = self.graph.headers.get(header_id) orelse return error.MissingHeaders;
+            try self.writeOpen("<li>");
+            try self.writeString("<a href=\"#");
+            try self.writeString(header.id);
+            try self.writeString("\">");
+            try self.writeString(header.text);
+            try self.writeString("</a>");
+            try self.writeClose("</li>");
+        }
+        try self.writeClose("</ol>");
+        try self.writeClose("</section>");
+    }
+
     pub fn writeFooter(self: *RenderContext) !void {
         const page = self.cur_page;
         const forward_links = self.graph.forward.get(page) orelse return error.MissingLinks;
 
         try self.writeOpen("<footer>");
+        try self.writeTableOfContents();
         if (forward_links.count() > 0) {
             try self.writeString("<h3>Forward Links</h3>");
             try self.writeOpen("<ul>");
@@ -605,15 +711,6 @@ const Parser = struct {
     }
 
     fn enter_block_impl(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, ctx: *RenderContext) !void {
-        const headers_openning_tags: [6][]const u8 = .{
-            "<h1>",
-            "<h2>",
-            "<h3>",
-            "<h4>",
-            "<h5>",
-            "<h6>",
-        };
-
         switch (blk) {
             c.MD_BLOCK_DOC => {},
             c.MD_BLOCK_QUOTE => try ctx.writeOpen("<blockquote>"),
@@ -644,8 +741,11 @@ const Parser = struct {
             c.MD_BLOCK_H => {
                 const h_detail = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail)));
                 const level = h_detail.level;
-                if (level >= 1 and level <= 6) {
-                    try ctx.writeOpen(headers_openning_tags[level - 1]);
+
+                // We only save the header level because we want to get full
+                // text before writing tag with id attribute.
+                if (ctx.cur_header_level == null) {
+                    ctx.cur_header_level = Page.HeaderLevel.fromInt(@intCast(level));
                 }
             },
             c.MD_BLOCK_CODE => {
@@ -722,15 +822,6 @@ const Parser = struct {
     }
 
     fn leave_block_impl(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, ctx: *RenderContext) !void {
-        const headers_closing_tags: [6][]const u8 = .{
-            "</h1>",
-            "</h2>",
-            "</h3>",
-            "</h4>",
-            "</h5>",
-            "</h6>",
-        };
-
         switch (blk) {
             c.MD_BLOCK_DOC => {},
             c.MD_BLOCK_QUOTE => try ctx.writeClose("</blockquote>"),
@@ -739,10 +830,41 @@ const Parser = struct {
             c.MD_BLOCK_LI => try ctx.writeClose("</li>"),
             c.MD_BLOCK_HR => {},
             c.MD_BLOCK_H => {
-                const h_detail = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail)));
-                const level = h_detail.level;
-                if (level >= 1 and level <= 6) {
-                    try ctx.writeClose(headers_closing_tags[level - 1]);
+                _ = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail)));
+
+                if (ctx.cur_header_level) |cur_header_level| {
+                    var raw_header_text = try ctx.cur_header_text.toOwnedSlice();
+                    var header_text: []const u8 = undefined;
+                    defer ctx.allocator.free(raw_header_text);
+
+                    var id: []const u8 = undefined;
+                    var has_custom_id: bool = false;
+                    if (mem.indexOf(u8, raw_header_text, "{#")) |start_idx| {
+                        if (mem.endsWith(u8, raw_header_text, "}")) {
+                            id = try ctx.allocator.dupe(u8, raw_header_text[start_idx + 2 .. raw_header_text.len - 1]);
+                            header_text = try ctx.allocator.dupe(u8, raw_header_text[0..start_idx]);
+                            has_custom_id = true;
+                        }
+                    }
+
+                    if (!has_custom_id) {
+                        header_text = try ctx.allocator.dupe(u8, raw_header_text);
+                        id = try toSlug(ctx.allocator, header_text);
+                    }
+
+                    const opening_tag = try std.fmt.allocPrint(ctx.allocator, "<h{d} id=\"{s}\">", .{ cur_header_level.toInt(), id });
+                    try ctx.writeString(opening_tag);
+                    try ctx.writeString(header_text);
+                    const closing_tag = try std.fmt.allocPrint(ctx.allocator, "</h{d}>\n", .{cur_header_level.toInt()});
+                    try ctx.writeString(closing_tag);
+
+                    const header = Page.Header{
+                        .id = id,
+                        .level = cur_header_level,
+                        .text = header_text,
+                    };
+                    try ctx.graph.addHeader(ctx.cur_page, header);
+                    ctx.cur_header_level = null;
                 }
             },
             c.MD_BLOCK_CODE => {
@@ -790,7 +912,7 @@ const Parser = struct {
                     if (mem.startsWith(u8, href, "/")) page_link = page_link[1..];
                     if (mem.endsWith(u8, href, ".md")) page_link = page_link[0 .. page_link.len - 3];
                     if (ctx.graph.pages.contains(page_link)) {
-                        log.debug("Markdown link to note page {s} from {s}\n", .{ page_link, ctx.cur_page });
+                        log.debug("Markdown link to note page {s} from {s}", .{ page_link, ctx.cur_page });
                         ctx.cur_link_url = page_link;
                     }
                 }
@@ -889,6 +1011,11 @@ const Parser = struct {
         }
 
         const data = text_data[0..size];
+
+        if (ctx.cur_header_level != null) {
+            try ctx.cur_header_text.appendSlice(data);
+            return;
+        }
 
         if (ctx.cur_link_url != null) {
             try ctx.cur_link_text.appendSlice(data);
@@ -1010,8 +1137,9 @@ pub fn main() !void {
     // Third pass: write to disk
     for (graph.page_list.items, 0..) |*page, i| {
         if (page.meta.skip) continue;
-        log.debug("Writing {s}\n", .{page.out_path});
+        log.debug("Writing {s}", .{page.out_path});
         var ctx = &contexts.items[i];
+        // TODO: write header/footer to separate bufs so we can prepend generated HTML later
         try ctx.writeFooter();
         try ctx.writeHtmlTail();
 
