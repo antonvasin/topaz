@@ -15,36 +15,41 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    const exe = b.addExecutable(.{
-        .name = "topaz",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
     const md4c = b.dependency("md4c", .{
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addIncludePath(md4c.path("src"));
-    exe.addIncludePath(md4c.path("src"));
-    exe.addCSourceFile(.{ .file = md4c.path("src/md4c.c") });
-
-    exe.linkLibC();
-
-    const yaml = b.dependency("yaml", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    exe.root_module.addImport("yaml", yaml.module("yaml"));
 
     const anyascii = b.dependency("anyascii", .{
         .target = target,
         .optimize = optimize,
     });
+
+    const yaml = b.dependency("yaml", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const root_module = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const exe = b.addExecutable(.{
+        .name = "topaz",
+        .root_module = root_module,
+    });
+
+    exe.root_module.link_libc = true;
+
+    exe.root_module.addIncludePath(md4c.path("src"));
+    exe.root_module.addCSourceFile(.{ .file = md4c.path("src/md4c.c") });
+
+    exe.root_module.addImport("yaml", yaml.module("yaml"));
+
     exe.root_module.addIncludePath(anyascii.path("impl/c"));
-    exe.addIncludePath(anyascii.path("impl/c"));
-    exe.addCSourceFile(.{ .file = anyascii.path("impl/c/anyascii.c") });
+    exe.root_module.addCSourceFile(.{ .file = anyascii.path("impl/c/anyascii.c") });
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -75,21 +80,17 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const exe_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = root_module,
     });
 
     exe_unit_tests.root_module.addIncludePath(md4c.path("src"));
-    exe_unit_tests.addIncludePath(md4c.path("src"));
-    exe_unit_tests.addCSourceFile(.{ .file = md4c.path("src/md4c.c") });
-    exe_unit_tests.linkLibC();
+    exe_unit_tests.root_module.addCSourceFile(.{ .file = md4c.path("src/md4c.c") });
+    exe_unit_tests.root_module.link_libc = true;
 
     exe_unit_tests.root_module.addImport("yaml", yaml.module("yaml"));
 
     exe_unit_tests.root_module.addIncludePath(anyascii.path("impl/c"));
-    exe_unit_tests.addIncludePath(anyascii.path("impl/c"));
-    exe_unit_tests.addCSourceFile(.{ .file = anyascii.path("impl/c/anyascii.c") });
+    exe_unit_tests.root_module.addCSourceFile(.{ .file = anyascii.path("impl/c/anyascii.c") });
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
