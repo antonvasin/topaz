@@ -168,8 +168,8 @@ const Page = struct {
                 allocator.free(meta.title);
                 meta.title = try allocator.dupe(u8, map.get("title").?.scalar);
             }
-            if (map.contains("draft")) meta.skip = map.get("draft").?.boolean;
-            if (map.contains("publish")) meta.skip = !map.get("publish").?.boolean;
+            if (map.contains("draft")) meta.skip = mem.eql(u8, map.get("draft").?.scalar, "true");
+            if (map.contains("publish")) meta.skip = !mem.eql(u8, map.get("publish").?.scalar, "true");
         }
 
         return .{
