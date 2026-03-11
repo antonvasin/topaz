@@ -166,10 +166,10 @@ const Page = struct {
             const map = yaml_parser.docs.items[0].map;
             if (map.contains("title")) {
                 allocator.free(meta.title);
-                meta.title = try allocator.dupe(u8, try map.get("title").?.asString());
+                meta.title = try allocator.dupe(u8, map.get("title").?.scalar);
             }
-            if (map.contains("draft")) meta.skip = try map.get("draft").?.asBool();
-            if (map.contains("publish")) meta.skip = !try map.get("publish").?.asBool();
+            if (map.contains("draft")) meta.skip = map.get("draft").?.boolean;
+            if (map.contains("publish")) meta.skip = !map.get("publish").?.boolean;
         }
 
         return .{
@@ -208,7 +208,7 @@ const PageGraph = struct {
     headers: std.StringHashMap(Page.Header),
 
     pub fn init(allocator: mem.Allocator) !PageGraph {
-        const page_list = std.ArrayList(Page).init(allocator);
+        const page_list = std.ArrayList(Page).empty;
         const pages = std.StringHashMap(usize).init(allocator);
         const forward = Links.init(allocator);
         const backward = Links.init(allocator);
@@ -227,7 +227,7 @@ const PageGraph = struct {
     }
 
     pub fn deinit(self: *PageGraph) void {
-        self.page_list.deinit();
+        self.page_list.deinit(self.allocator);
         self.pages.deinit();
         self.forward.deinit();
         self.backward.deinit();
@@ -236,7 +236,7 @@ const PageGraph = struct {
     }
 
     pub fn addPage(self: *PageGraph, page: Page) !void {
-        try self.page_list.append(page);
+        try self.page_list.append(self.allocator, page);
         const index = self.page_list.items.len - 1;
         try self.pages.put(page.name, index);
 
@@ -283,9 +283,9 @@ const PageGraph = struct {
 
         const headers_list = try self.headers_lists.getOrPut(page_name);
         if (!headers_list.found_existing) {
-            headers_list.value_ptr.* = std.ArrayList([]const u8).init(self.allocator);
+            headers_list.value_ptr.* = std.ArrayList([]const u8).empty;
         }
-        try headers_list.value_ptr.append(header.id);
+        try headers_list.value_ptr.append(self.allocator, header.id);
     }
 };
 
@@ -293,7 +293,7 @@ fn toSlug(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
     const ascii = try anyascii.transliterate(allocator, text);
     defer allocator.free(ascii);
 
-    var slug = std.ArrayList(u8).init(allocator);
+    var slug = std.ArrayList(u8).empty;
 
     var need_dash = false;
     var started = false;
@@ -302,15 +302,15 @@ fn toSlug(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
         if (std.ascii.isAlphanumeric(ch)) {
             if (!started) started = true;
             if (need_dash) {
-                try slug.append('-');
+                try slug.append(allocator, '-');
                 need_dash = false;
             }
-            try slug.append(ch);
+            try slug.append(allocator, ch);
         } else if (!need_dash and started)
             need_dash = true;
     }
 
-    return try slug.toOwnedSlice();
+    return try slug.toOwnedSlice(allocator);
 }
 
 /// Incrementally builds HTML string with correct indentation.
@@ -360,9 +360,9 @@ const RenderContext = struct {
     cur_header_level: ?Page.HeaderLevel = null,
 
     pub fn init(allocator: mem.Allocator, graph: *PageGraph) !RenderContext {
-        const buf = std.ArrayList(u8).init(allocator);
-        const link_text = std.ArrayList(u8).init(allocator);
-        const header_text = std.ArrayList(u8).init(allocator);
+        const buf = std.ArrayList(u8).empty;
+        const link_text = std.ArrayList(u8).empty;
+        const header_text = std.ArrayList(u8).empty;
 
         return .{
             .buf = buf,
@@ -374,14 +374,14 @@ const RenderContext = struct {
     }
 
     pub fn deinit(self: *RenderContext) void {
-        self.buf.deinit();
-        self.cur_link_text.deinit();
-        self.cur_header_text.deinit();
+        self.buf.deinit(self.allocator);
+        self.cur_link_text.deinit(self.allocator);
+        self.cur_header_text.deinit(self.allocator);
     }
 
     /// Write text as is
     fn write(self: *RenderContext, str: []const u8) !void {
-        try self.buf.appendSlice(str);
+        try self.buf.appendSlice(self.allocator, str);
     }
 
     /// Write string with indentation
@@ -619,11 +619,11 @@ const RenderContext = struct {
                 char == '@')
             {
                 // FIXME: use writer fn for single chars
-                try self.buf.append(char);
+                try self.buf.append(self.allocator, char);
             } else if (char == '&') {
                 try self.write("&amp;");
             } else {
-                try self.buf.writer().print("%{X:0>2}", .{char});
+                try self.buf.writer(self.allocator).print("%{X:0>2}", .{char});
             }
         }
     }
@@ -704,7 +704,7 @@ const Parser = struct {
         _ = c.md_parse(@ptrCast(markdown), @intCast(markdown.len), &self.md4c, @ptrCast(ctx));
     }
 
-    fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
+    fn enter_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.c) c_int {
         const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
         enter_block_impl(blk, detail, ctx) catch return 1;
         return 0;
@@ -815,7 +815,7 @@ const Parser = struct {
         }
     }
 
-    fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
+    fn leave_block(blk: c.MD_BLOCKTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.c) c_int {
         const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
         leave_block_impl(blk, detail, ctx) catch return 1;
         return 0;
@@ -833,7 +833,7 @@ const Parser = struct {
                 _ = @as(*const c.MD_BLOCK_H_DETAIL, @ptrCast(@alignCast(detail)));
 
                 if (ctx.cur_header_level) |cur_header_level| {
-                    var raw_header_text = try ctx.cur_header_text.toOwnedSlice();
+                    var raw_header_text = try ctx.cur_header_text.toOwnedSlice(ctx.allocator);
                     var header_text: []const u8 = undefined;
                     defer ctx.allocator.free(raw_header_text);
 
@@ -882,7 +882,7 @@ const Parser = struct {
         }
     }
 
-    fn enter_span(span: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
+    fn enter_span(span: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.c) c_int {
         const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
         enter_span_impl(span, detail, ctx) catch return 1;
         return 0;
@@ -949,7 +949,7 @@ const Parser = struct {
         }
     }
 
-    fn leave_span(span: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.C) c_int {
+    fn leave_span(span: c.MD_SPANTYPE, detail: ?*anyopaque, userdata: ?*anyopaque) callconv(.c) c_int {
         const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
         leave_span_impl(span, detail, ctx) catch return 1;
         return 0;
@@ -964,7 +964,7 @@ const Parser = struct {
             c.MD_SPAN_A => {
                 try ctx.writeString("</a>");
                 if (ctx.cur_link_url) |link_url| {
-                    const link_text = try ctx.cur_link_text.toOwnedSlice();
+                    const link_text = try ctx.cur_link_text.toOwnedSlice(ctx.allocator);
                     const link = Page.Link{
                         .link = link_url,
                         .text = link_text,
@@ -985,7 +985,7 @@ const Parser = struct {
             c.MD_SPAN_WIKILINK => {
                 try ctx.writeString("</a>");
                 if (ctx.cur_link_url) |link_url| {
-                    const link_text = try ctx.cur_link_text.toOwnedSlice();
+                    const link_text = try ctx.cur_link_text.toOwnedSlice(ctx.allocator);
                     const wikilink = Page.Link{
                         .link = link_url,
                         .text = link_text,
@@ -998,7 +998,7 @@ const Parser = struct {
         }
     }
 
-    fn text(type_val: c.MD_TEXTTYPE, text_data: [*c]const c.MD_CHAR, size: c.MD_SIZE, userdata: ?*anyopaque) callconv(.C) c_int {
+    fn text(type_val: c.MD_TEXTTYPE, text_data: [*c]const c.MD_CHAR, size: c.MD_SIZE, userdata: ?*anyopaque) callconv(.c) c_int {
         const ctx = @as(*RenderContext, @ptrCast(@alignCast(userdata)));
         text_impl(type_val, text_data, size, ctx) catch return 1;
         return 0;
@@ -1013,12 +1013,12 @@ const Parser = struct {
         const data = text_data[0..size];
 
         if (ctx.cur_header_level != null) {
-            try ctx.cur_header_text.appendSlice(data);
+            try ctx.cur_header_text.appendSlice(ctx.allocator, data);
             return;
         }
 
         if (ctx.cur_link_url != null) {
-            try ctx.cur_link_text.appendSlice(data);
+            try ctx.cur_link_text.appendSlice(ctx.allocator, data);
         }
 
         try ctx.renderText(type_val, data);
@@ -1082,8 +1082,7 @@ pub fn main() !void {
         }
     }
 
-    var input_files = std.ArrayList([]const u8).init(allocator);
-    defer input_files.deinit();
+    var input_files = std.ArrayList([]const u8).empty;
 
     const stat = try std.fs.cwd().statFile(config.input_path);
 
@@ -1096,12 +1095,12 @@ pub fn main() !void {
         while (try walker.next()) |entry| {
             if (entry.kind == .file and mem.eql(u8, std.fs.path.extension(entry.basename), ".md")) {
                 const path = try allocator.dupe(u8, entry.path);
-                try input_files.append(path);
+                try input_files.append(allocator, path);
             }
         }
     } else if (stat.kind == .file and mem.eql(u8, std.fs.path.extension(config.input_path), ".md")) {
         // Collect individual input files
-        try input_files.append(config.input_path);
+        try input_files.append(allocator, config.input_path);
     }
 
     var parser = try Parser.init();
@@ -1116,7 +1115,7 @@ pub fn main() !void {
 
     // Process files
     var graph = try PageGraph.init(allocator);
-    var contexts = std.ArrayList(RenderContext).init(allocator);
+    var contexts = std.ArrayList(RenderContext).empty;
 
     // First pass: read files into memory and parse metadata
     for (input_files.items) |path| {
@@ -1124,7 +1123,7 @@ pub fn main() !void {
         const page_name = path[0 .. path.len - 3];
         var ctx = try RenderContext.init(allocator, &graph);
         ctx.cur_page = page_name;
-        try contexts.append(ctx);
+        try contexts.append(allocator, ctx);
     }
 
     // Second pass: parse markdown and index blocks/links
@@ -1152,8 +1151,7 @@ pub fn main() !void {
         try std.fs.cwd().makePath(dir_path);
         const dest_file = try std.fs.cwd().createFile(out_path, .{});
         defer dest_file.close();
-        const fw = dest_file.writer();
-        _ = try fw.writeAll(ctx.buf.items);
+        try dest_file.writeAll(ctx.buf.items);
     }
 }
 

@@ -41,15 +41,15 @@ pub fn build(b: *std.Build) void {
         .root_module = root_module,
     });
 
-    exe.root_module.link_libc = true;
+    root_module.link_libc = true;
 
-    exe.root_module.addIncludePath(md4c.path("src"));
-    exe.root_module.addCSourceFile(.{ .file = md4c.path("src/md4c.c") });
+    root_module.addIncludePath(md4c.path("src"));
+    root_module.addCSourceFile(.{ .file = md4c.path("src/md4c.c") });
 
-    exe.root_module.addImport("yaml", yaml.module("yaml"));
+    root_module.addImport("yaml", yaml.module("yaml"));
 
-    exe.root_module.addIncludePath(anyascii.path("impl/c"));
-    exe.root_module.addCSourceFile(.{ .file = anyascii.path("impl/c/anyascii.c") });
+    root_module.addIncludePath(anyascii.path("impl/c"));
+    root_module.addCSourceFile(.{ .file = anyascii.path("impl/c/anyascii.c") });
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -82,15 +82,6 @@ pub fn build(b: *std.Build) void {
     const exe_unit_tests = b.addTest(.{
         .root_module = root_module,
     });
-
-    exe_unit_tests.root_module.addIncludePath(md4c.path("src"));
-    exe_unit_tests.root_module.addCSourceFile(.{ .file = md4c.path("src/md4c.c") });
-    exe_unit_tests.root_module.link_libc = true;
-
-    exe_unit_tests.root_module.addImport("yaml", yaml.module("yaml"));
-
-    exe_unit_tests.root_module.addIncludePath(anyascii.path("impl/c"));
-    exe_unit_tests.root_module.addCSourceFile(.{ .file = anyascii.path("impl/c/anyascii.c") });
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 

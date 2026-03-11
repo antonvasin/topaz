@@ -7,8 +7,8 @@ const c = @cImport({
 pub fn transliterate(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     if (input.len == 0) return try allocator.dupe(u8, "");
 
-    var result = std.ArrayList(u8).init(allocator);
-    defer result.deinit();
+    var result = std.ArrayList(u8).empty;
+    defer result.deinit(allocator);
 
     var i: usize = 0;
     while (i < input.len) {
@@ -24,11 +24,10 @@ pub fn transliterate(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
         const ascii_len = c.anyascii(@intCast(codepoint), &ascii_ptr);
 
         if (ascii_ptr != null and ascii_len > 0) {
-            try result.appendSlice(ascii_ptr[0..ascii_len]);
+            try result.appendSlice(allocator, ascii_ptr[0..ascii_len]);
         }
         i += len;
     }
 
-    return try result.toOwnedSlice();
+    return try result.toOwnedSlice(allocator);
 }
-
