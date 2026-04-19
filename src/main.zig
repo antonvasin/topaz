@@ -895,8 +895,18 @@ const Parser = struct {
             c.MD_SPAN_A => {
                 const a_detail = @as(*const c.MD_SPAN_A_DETAIL, @ptrCast(@alignCast(detail)));
                 const href = a_detail.href.text[0..a_detail.href.size];
+                var page_link = href;
+                if (mem.startsWith(u8, href, "/")) page_link = page_link[1..];
+                if (mem.endsWith(u8, href, ".md")) page_link = page_link[0 .. page_link.len - 3];
+                const is_known_page = ctx.graph.pages.contains(page_link);
                 try ctx.writeString("<a href=\"");
-                try ctx.renderUrlEscaped(href);
+                if (mem.endsWith(u8, href, ".md") and is_known_page) {
+                    log.debug("[{s}] Rewriting internal .md link {s}", .{ ctx.cur_page, href });
+                    try ctx.renderUrlEscaped(href[0 .. href.len - 3]);
+                    try ctx.write(".html");
+                } else {
+                    try ctx.renderUrlEscaped(href);
+                }
 
                 const has_title = a_detail.title.text != null and a_detail.title.size > 0;
                 if (has_title) {
@@ -908,11 +918,8 @@ const Parser = struct {
 
                 // TODO: do not add links for ignored pages
                 if (ctx.cur_link_url == null) {
-                    var page_link = href;
-                    if (mem.startsWith(u8, href, "/")) page_link = page_link[1..];
-                    if (mem.endsWith(u8, href, ".md")) page_link = page_link[0 .. page_link.len - 3];
-                    if (ctx.graph.pages.contains(page_link)) {
-                        log.debug("Markdown link to note page {s} from {s}", .{ page_link, ctx.cur_page });
+                    if (is_known_page) {
+                        log.debug("[{s}] Markdown link to {s}", .{ ctx.cur_page, page_link });
                         ctx.cur_link_url = page_link;
                     }
                 }
