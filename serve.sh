@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-python3 -m http.server -d topaz-out
+python3 -m http.server 8080 -d topaz-out
