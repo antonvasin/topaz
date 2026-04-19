@@ -485,7 +485,7 @@ const RenderContext = struct {
             while (iterator.next()) |link| {
                 try self.writeOpen("<li>");
 
-                try self.writeString("<a href=\"");
+                try self.writeString("<a href=\"/");
                 try self.renderUrlEscaped(link.link);
                 try self.writeString(".html\">");
                 try self.writeString(link.text);
@@ -505,7 +505,7 @@ const RenderContext = struct {
                 while (iterator.next()) |link| {
                     try self.writeOpen("<li>");
 
-                    try self.writeString("<a href=\"");
+                    try self.writeString("<a href=\"/");
                     try self.renderUrlEscaped(link.link);
                     try self.writeString(".html\">");
                     try self.writeString(link.text);
