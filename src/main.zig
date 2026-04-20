@@ -12,10 +12,23 @@ const mem = std.mem;
 const assert = std.debug.assert;
 const testing = std.testing;
 
-pub const std_options: std.Options = .{
-    // Set the log level to info
-    // .log_level = .info,
+var debug_enabled: bool = false;
 
+pub const std_options: std.Options = .{
+    .logFn = struct {
+        pub fn logFn(
+            comptime level: std.log.Level,
+            comptime scope: @TypeOf(.enum_literal),
+            comptime format: []const u8,
+            args: anytype,
+        ) void {
+            if (scope == .parser or scope == .tokenizer) {
+                if (level != .err) return;
+            }
+            if (level == .debug and !debug_enabled) return;
+            std.log.defaultLog(level, scope, format, args);
+        }
+    }.logFn,
     .log_scope_levels = &.{
         .{ .scope = .parser, .level = .err },
         .{ .scope = .tokenizer, .level = .err },
@@ -45,8 +58,11 @@ fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: *Pag
 }
 
 const Config = struct {
-    input_path: []const u8, // Default to current directory
+    /// Defaults to current directory
+    input_path: []const u8,
+    /// Defaults to 'topaz-out'
     output_path: []const u8,
+    /// Debug output
     is_debug: bool = false,
 };
 
@@ -76,6 +92,7 @@ pub fn main() !void {
             config.output_path = arg[6..];
         } else if (mem.eql(u8, arg, "--debug")) {
             config.is_debug = true;
+            debug_enabled = true;
         }
     }
 
