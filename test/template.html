@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+    </head>
+
+    <body>
+        <template id="page">
+            <nav>
+                <slot name="page-nav">PAGE NAV</slot>
+            </nav>
+
+            <article>
+                <h1>
+                    <slot name="page-title">PAGE TITLE</slot>
+                </h1>
+                <section>
+                    <slot name="table-of-contents">TABLE OF CONTENTS</slot>
+                </section>
+
+                <section>
+                    <slot name="page-body">PAGE BODY</slot>
+                </section>
+            </article>
+        </template>
+    </body>
+</html>

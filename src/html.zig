@@ -54,6 +54,8 @@ pub const RenderContext = struct {
     cur_header_text: std.ArrayList(u8),
     cur_header_level: ?Page.HeaderLevel = null,
 
+    template: ?Template = null,
+
     pub fn init(allocator: std.mem.Allocator, page_graph: *PageGraph) !RenderContext {
         const buf = std.ArrayList(u8).empty;
         const link_text = std.ArrayList(u8).empty;
@@ -123,20 +125,22 @@ pub const RenderContext = struct {
     }
 
     pub fn writeHtmlHead(self: *RenderContext, page_title: []const u8) !void {
-        const html_head_open =
+        const html_head_open = if (self.template) |*tmpl| blk: {
+            const head = tmpl.getHeadPos() orelse return error.MissingTemplateHead;
+            break :blk tmpl.content[head[0]..head[1]];
+        } else 
             \\<!DOCTYPE html>
             \\<html>
             \\    <head>
-            \\        <meta name="generator" content="topaz">
             \\        <meta charset="UTF-8">
             \\
         ;
-
         try self.write(html_head_open);
         self.current_level = 2;
 
+        try self.writeString("<meta name=\"generator\" content=\"topaz\">\n");
         var title_buf: [1024]u8 = undefined;
-        const title = try std.fmt.bufPrint(&title_buf, "<title>{s}</title>", .{page_title});
+        const title = try std.fmt.bufPrint(&title_buf, "<title>{s}</title>\n", .{page_title});
         try self.writeString(title);
 
         try self.writeClose("</head>");
@@ -365,5 +369,25 @@ pub const RenderContext = struct {
                 else => try self.write(data),
             }
         }
+    }
+};
+
+pub const Template = struct {
+    const Pos = struct { usize, usize };
+    content: []const u8,
+    // start - title
+    head: ?Pos = null,
+    // // title - body start
+    body: ?Pos = null,
+    // // body end - end
+    // tail: Pos,
+
+    pub fn getHeadPos(self: *Template) ?Pos {
+        if (self.head) |h| return h;
+        const head_close = std.mem.indexOf(u8, self.content, "</head>") orelse return null;
+        const nl = std.mem.lastIndexOfScalar(u8, self.content[0..head_close], '\n') orelse return null;
+        const h: Pos = .{ 0, nl + 1 };
+        self.head = h;
+        return h;
     }
 };

@@ -64,6 +64,9 @@ const Config = struct {
     output_path: []const u8,
     /// Debug output
     is_debug: bool = false,
+    /// Defaults to 'template.html'
+    template: ?[]const u8 = null,
+    template_file: ?[]const u8 = null,
 };
 
 pub fn main() !void {
@@ -71,11 +74,7 @@ pub fn main() !void {
     const allocator = arena.allocator();
     defer arena.deinit();
 
-    var config = Config{
-        .input_path = ".",
-        .output_path = "topaz-out",
-        .is_debug = false,
-    };
+    var config = Config{ .input_path = ".", .output_path = "topaz-out", .is_debug = false };
 
     const args = try std.process.argsAlloc(allocator);
     // Parse the command line arguments. Config arguments that take a value
@@ -83,16 +82,20 @@ pub fn main() !void {
     // TODO: add support for list of inputs
     var found_input = false;
     for (args[1..]) |arg| {
-        if (!mem.startsWith(u8, arg, "--")) {
+        if (mem.eql(u8, arg, "--debug")) {
+            config.is_debug = true;
+            debug_enabled = true;
+        } else if (!mem.startsWith(u8, arg, "--")) {
             if (!found_input) {
                 config.input_path = arg;
                 found_input = true;
             }
         } else if (mem.startsWith(u8, arg, "--out=")) {
             config.output_path = arg[6..];
-        } else if (mem.eql(u8, arg, "--debug")) {
-            config.is_debug = true;
-            debug_enabled = true;
+            log.info("Out dir is \"{s}\"\n", .{config.output_path});
+        } else if (mem.startsWith(u8, arg, "--template=")) {
+            config.template = arg[11..];
+            log.info("Using template {s}", .{config.template.?});
         }
     }
 
@@ -124,18 +127,24 @@ pub fn main() !void {
         std.log.err("Failed to resolve dest path: {any}\n", .{err});
         return err;
     };
-    std.log.info("Out dir is \"{s}\"\n", .{config.output_path});
     try std.fs.cwd().makePath(dest_dir);
 
     // Process files
     var page_graph = try PageGraph.init(allocator);
     var contexts = std.ArrayList(RenderContext).empty;
 
+    if (config.template) |template| {
+        const tmpl_stat = try std.fs.cwd().statFile(template);
+        const data = try std.fs.Dir.readFileAlloc(std.fs.cwd(), allocator, template, tmpl_stat.size);
+        config.template_file = data;
+    }
+
     // First pass: read files into memory and parse metadata
     for (input_files.items) |path| {
         try processFile(allocator, path, &page_graph, &config);
         const page_name = path[0 .. path.len - 3];
         var ctx = try RenderContext.init(allocator, &page_graph);
+        if (config.template_file) |template| ctx.template = .{ .content = template };
         ctx.cur_page = page_name;
         try contexts.append(allocator, ctx);
     }
