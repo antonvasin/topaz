@@ -54,6 +54,11 @@ fn serialize(data: ?[*]const c.lxb_char_t, len: usize, _: ?*anyopaque) callconv(
     return c.LXB_STATUS_OK;
 }
 
+fn printNode(node: *c.lxb_dom_node_t) !void {
+    const status = c.lxb_html_serialize_pretty_tree_cb(node, c.LXB_HTML_SERIALIZE_EXT_OPT_UNDEF, 0, &serialize, null);
+    if (status != c.LXB_STATUS_OK) return error.Print;
+}
+
 pub const Document = struct {
     raw: *c.lxb_html_document_t,
 
@@ -85,13 +90,28 @@ pub const Document = struct {
         return .{ .raw = doc };
     }
 
+    pub fn head(self: *Document) Element {
+        return .{ .raw = c.lxb_dom_interface_element(self.raw.head) };
+    }
+
+    pub fn body(self: *Document) Element {
+        return .{ .raw = c.lxb_dom_interface_element(self.raw.body) };
+    }
+
     pub fn print(self: *Document) !void {
-        const status = c.lxb_html_serialize_pretty_tree_cb(c.lxb_dom_interface_node(self.raw), c.LXB_HTML_SERIALIZE_EXT_OPT_UNDEF, 0, &serialize, null);
-        if (status != c.LXB_STATUS_OK) return error.Print;
+        try printNode(c.lxb_dom_interface_node(self.raw));
     }
 
     pub fn deinit(self: *Document) void {
         _ = c.lxb_html_document_destroy(self.raw);
+    }
+};
+
+pub const Element = struct {
+    raw: *c.lxb_dom_element_t,
+
+    pub fn print(self: *Document) !void {
+        try printNode(c.lxb_dom_interface_node(self.raw));
     }
 };
 
@@ -110,10 +130,21 @@ test "parse" {
     ;
     var doc = try Document.parse(html);
     defer doc.deinit();
-    const body = c.lxb_dom_interface_element(doc.raw.body);
-    const h1 = c.lxb_dom_node_first_child(c.lxb_dom_interface_node(body));
+
+    const body = doc.body();
+    const first_child = c.lxb_dom_node_first_child(c.lxb_dom_interface_node(body.raw));
     var text_len: usize = 0;
-    const text = c.lxb_dom_node_text_content(h1, &text_len);
+    const text = c.lxb_dom_node_text_content(first_child, &text_len);
     const match = "Hello!";
     try std.testing.expect(std.mem.eql(u8, text[0..text_len], match));
+
+    var title_len: usize = 0;
+    var title = c.lxb_html_document_title(doc.raw, &title_len);
+    try std.testing.expect(title != null);
+    try std.testing.expect(std.mem.eql(u8, title[0..title_len], "Hello world!"));
+    const new_title: []const c.lxb_char_t = "New title";
+    const status = c.lxb_html_document_title_set(doc.raw, new_title.ptr, new_title.len);
+    try std.testing.expect(status == c.LXB_STATUS_OK);
+    title = c.lxb_html_document_title(doc.raw, &title_len);
+    try std.testing.expect(std.mem.eql(u8, title[0..title_len], new_title));
 }
