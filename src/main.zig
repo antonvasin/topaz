@@ -279,6 +279,7 @@ test "RenderContext" {
     };
 }
 
+// FIXME:
 test {
     _ = parse_html;
 }
