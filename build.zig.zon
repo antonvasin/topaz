@@ -36,6 +36,10 @@
             .url = "https://github.com/anyascii/anyascii/archive/refs/tags/0.3.2.tar.gz",
             .hash = "N-V-__8AAEJPmwFyzomrOEJq2EgXyDDfJatQKqnVQyY4vYNp",
         },
+        .lexbor = .{
+            .url = "https://github.com/lexbor/lexbor/archive/refs/tags/v3.0.0.tar.gz",
+            .hash = "N-V-__8AAMxVvAIalChC2bXMLXbWpURCkFNzlDy86Nwguncd",
+        },
     },
     .paths = .{
         "build.zig",

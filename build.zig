@@ -3,7 +3,7 @@ const std = @import("std");
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -30,6 +30,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const lexbor = b.dependency("lexbor", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const lexbor_dir = lexbor.path("source");
+
     const root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -50,6 +56,30 @@ pub fn build(b: *std.Build) void {
 
     root_module.addIncludePath(anyascii.path("impl/c"));
     root_module.addCSourceFile(.{ .file = anyascii.path("impl/c/anyascii.c") });
+
+    root_module.addIncludePath(lexbor.path("source"));
+
+    const src_abs = lexbor_dir.getPath(b);
+    var src_dir = try std.fs.openDirAbsolute(src_abs, .{ .iterate = true });
+    var files: std.ArrayListUnmanaged([]const u8) = .empty;
+    var walker = try src_dir.walk(b.allocator);
+    defer walker.deinit();
+    while (try walker.next()) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.path, ".c")) continue;
+        if (target.result.os.tag == .windows) {
+            if (std.mem.indexOf(u8, entry.path, "posix") != null) continue;
+        } else {
+            if (std.mem.indexOf(u8, entry.path, "windows_nt") != null) continue;
+        }
+        try files.append(b.allocator, b.dupe(entry.path));
+    }
+
+    root_module.addCSourceFiles(.{
+        .root = lexbor.path("source"),
+        .files = files.items,
+        .flags = &.{ "-std=c99", "-DLEXBOR_STATIC", "-w" },
+    });
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

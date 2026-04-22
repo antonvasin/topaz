@@ -6,7 +6,7 @@ const c = @cImport({
 const anyascii = @import("anyascii.zig");
 
 const log = @import("./utils.zig").log;
-const RenderContext = @import("./html.zig").RenderContext;
+const RenderContext = @import("./render_html.zig").RenderContext;
 const Page = @import("./graph.zig").Page;
 
 /// Wraps MD4C for markdown parsing with RenderContext

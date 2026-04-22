@@ -1,11 +1,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Parser = @import("./md.zig").Parser;
-const RenderContext = @import("./html.zig").RenderContext;
+const RenderContext = @import("./render_html.zig").RenderContext;
 const graph = @import("./graph.zig");
 const PageGraph = graph.PageGraph;
 const Page = graph.Page;
 const log = @import("./utils.zig").log;
+const parse_html = @import("./parse_html.zig");
 
 const print = std.debug.print;
 const mem = std.mem;
@@ -245,8 +246,8 @@ test "RenderContext" {
         \\<!DOCTYPE html>
         \\<html>
         \\    <head>
-        \\        <meta name="generator" content="topaz">
         \\        <meta charset="UTF-8">
+        \\        <meta name="generator" content="topaz">
         \\        <title>Page Title</title>
         \\    </head>
         \\    <body>
@@ -273,7 +274,11 @@ test "RenderContext" {
     ;
 
     testing.expect(mem.eql(u8, ctx.buf.items, buf)) catch |err| {
-        print("\n\ngot:\n{s}\n\n\nexpected:\n{s}\n", .{ ctx.buf.items, buf });
+        print("\n\ngot:\n---\n{s}\n---\n\nexpected:\n---\n{s}\n---\n", .{ ctx.buf.items, buf });
         return err;
     };
+}
+
+test {
+    _ = parse_html;
 }
