@@ -10,6 +10,7 @@ pub const Error = error{
     ParserInit,
     Parse,
     Print,
+    MissingTitle,
 };
 
 const LxbFilterCtx = extern struct {
@@ -94,6 +95,18 @@ pub const Document = struct {
         return .{ .raw = c.lxb_dom_interface_element(self.raw.head) };
     }
 
+    pub fn title(self: *Document) ![]const u8 {
+        var title_len: usize = 0;
+        const doc_title = c.lxb_html_document_title(self.raw, &title_len);
+        if (doc_title == null) return error.Title;
+        return doc_title[0..title_len];
+    }
+
+    pub fn title_set(self: *Document, new_title: []const u8) !void {
+        const status = c.lxb_html_document_title_set(self.raw, new_title.ptr, new_title.len);
+        if (status != c.LXB_STATUS_OK) return error.Title;
+    }
+
     pub fn body(self: *Document) Element {
         return .{ .raw = c.lxb_dom_interface_element(self.raw.body) };
     }
@@ -110,8 +123,16 @@ pub const Document = struct {
 pub const Element = struct {
     raw: *c.lxb_dom_element_t,
 
-    pub fn print(self: *Document) !void {
+    pub fn print(self: *Element) !void {
         try printNode(c.lxb_dom_interface_node(self.raw));
+    }
+
+    pub fn deinit(self: *Element) void {
+        _ = c.lxb_dom_node_destroy_deep(self.raw);
+    }
+
+    pub fn clone(self: *Element, deep: bool) Element {
+        return .{ .raw = c.lxb_dom_node_clone(c.lxb_dom_interface_node(self.raw), deep) };
     }
 };
 
@@ -135,16 +156,12 @@ test "parse" {
     const first_child = c.lxb_dom_node_first_child(c.lxb_dom_interface_node(body.raw));
     var text_len: usize = 0;
     const text = c.lxb_dom_node_text_content(first_child, &text_len);
-    const match = "Hello!";
-    try std.testing.expect(std.mem.eql(u8, text[0..text_len], match));
+    try std.testing.expectEqualStrings("Hello!", text[0..text_len]);
 
-    var title_len: usize = 0;
-    var title = c.lxb_html_document_title(doc.raw, &title_len);
-    try std.testing.expect(title != null);
-    try std.testing.expect(std.mem.eql(u8, title[0..title_len], "Hello world!"));
-    const new_title: []const c.lxb_char_t = "New title";
-    const status = c.lxb_html_document_title_set(doc.raw, new_title.ptr, new_title.len);
-    try std.testing.expect(status == c.LXB_STATUS_OK);
-    title = c.lxb_html_document_title(doc.raw, &title_len);
-    try std.testing.expect(std.mem.eql(u8, title[0..title_len], new_title));
+    const title = try doc.title();
+    try std.testing.expectEqualStrings("Hello world!", title);
+
+    try doc.title_set("New title");
+    const new_title = try doc.title();
+    try std.testing.expectEqualStrings("New title", new_title);
 }
