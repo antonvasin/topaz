@@ -11,6 +11,8 @@ pub const Error = error{
     Parse,
     Print,
     MissingTitle,
+    Create,
+    Serialization,
 };
 
 const LxbFilterCtx = extern struct {
@@ -63,6 +65,13 @@ fn printNode(node: *c.lxb_dom_node_t) !void {
 pub const Document = struct {
     raw: *c.lxb_html_document_t,
 
+    pub fn init() !Document {
+        const doc = c.lxb_html_document_create();
+        if (doc == null) return error.Create;
+        doc.*.ready_state = c.LXB_HTML_DOCUMENT_READY_STATE_COMPLETE;
+        return .{ .raw = doc };
+    }
+
     /// Parses html document stripping whitespace and comments
     pub fn parse(html: [*c]const u8) !Document {
         const html_len = std.mem.len(html);
@@ -91,27 +100,27 @@ pub const Document = struct {
         return .{ .raw = doc };
     }
 
-    pub fn head(self: *Document) Element {
+    pub fn head(self: *const Document) Element {
         return .{ .raw = c.lxb_dom_interface_element(self.raw.head) };
     }
 
-    pub fn title(self: *Document) ![]const u8 {
+    pub fn title(self: *const Document) ![]const u8 {
         var title_len: usize = 0;
         const doc_title = c.lxb_html_document_title(self.raw, &title_len);
         if (doc_title == null) return error.Title;
         return doc_title[0..title_len];
     }
 
-    pub fn title_set(self: *Document, new_title: []const u8) !void {
+    pub fn titleSet(self: *const Document, new_title: []const u8) !void {
         const status = c.lxb_html_document_title_set(self.raw, new_title.ptr, new_title.len);
         if (status != c.LXB_STATUS_OK) return error.Title;
     }
 
-    pub fn body(self: *Document) Element {
+    pub fn body(self: *const Document) Element {
         return .{ .raw = c.lxb_dom_interface_element(self.raw.body) };
     }
 
-    pub fn print(self: *Document) !void {
+    pub fn print(self: *const Document) !void {
         try printNode(c.lxb_dom_interface_node(self.raw));
     }
 
@@ -123,7 +132,7 @@ pub const Document = struct {
 pub const Element = struct {
     raw: *c.lxb_dom_element_t,
 
-    pub fn print(self: *Element) !void {
+    pub fn print(self: *const Element) !void {
         try printNode(c.lxb_dom_interface_node(self.raw));
     }
 
@@ -131,25 +140,31 @@ pub const Element = struct {
         _ = c.lxb_dom_node_destroy_deep(self.raw);
     }
 
-    pub fn clone(self: *Element, deep: bool) Element {
-        return .{ .raw = c.lxb_dom_node_clone(c.lxb_dom_interface_node(self.raw), deep) };
+    /// Serializes element to string. Caller must destroy parent Document in order to free the memory
+    pub fn serialize(self: *const Element) ![]const u8 {
+        var str: c.lexbor_str_t = std.mem.zeroes(c.lexbor_str_t);
+        const status = c.lxb_html_serialize_deep_str(c.lxb_dom_interface_node(self.raw), &str);
+        if (status != c.LXB_STATUS_OK) return error.Serialization;
+
+        return str.data[0..str.length];
     }
 };
 
-test "parse" {
-    const html =
-        \\<!doctype html>
-        \\<html>
-        \\    <head>
-        \\        <title>Hello world!</title>
-        \\        <!-- some comment to be stripped -->
-        \\    </head>
-        \\    <body>
-        \\        <h1>Hello!</h1>
-        \\    </body>
-        \\</html>
-    ;
-    var doc = try Document.parse(html);
+const test_html_doc =
+    \\<!doctype html>
+    \\<html>
+    \\    <head>
+    \\        <title>Hello world!</title>
+    \\        <!-- some comment to be stripped -->
+    \\    </head>
+    \\    <body>
+    \\        <h1>Hello!</h1>
+    \\    </body>
+    \\</html>
+;
+
+test "parse HTML" {
+    var doc = try Document.parse(test_html_doc);
     defer doc.deinit();
 
     const body = doc.body();
@@ -157,11 +172,58 @@ test "parse" {
     var text_len: usize = 0;
     const text = c.lxb_dom_node_text_content(first_child, &text_len);
     try std.testing.expectEqualStrings("Hello!", text[0..text_len]);
+}
 
+test "get and set title" {
+    var doc = try Document.parse(test_html_doc);
+    defer doc.deinit();
     const title = try doc.title();
     try std.testing.expectEqualStrings("Hello world!", title);
 
-    try doc.title_set("New title");
+    try doc.titleSet("New title");
     const new_title = try doc.title();
     try std.testing.expectEqualStrings("New title", new_title);
+}
+
+test "serialize element" {
+    var doc = try Document.parse(test_html_doc);
+    defer doc.deinit();
+    const head = try doc.head().serialize();
+    try std.testing.expectEqualStrings("<title>Hello world!</title>", head);
+}
+
+test "clone and modify element" {
+    const html_doc =
+        \\<!doctype html>
+        \\<html>
+        \\    <head>
+        \\        <title>Hello world!</title>
+        \\        <!-- some comment to be stripped -->
+        \\        <meta charset="utf-8" />
+        \\        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        \\    </head>
+        \\    <body>
+        \\        <h1>Hello!</h1>
+        \\    </body>
+        \\</html>
+    ;
+
+    var doc = try Document.parse(html_doc);
+    defer doc.deinit();
+    var doc2 = try Document.parse("");
+    defer doc2.deinit();
+
+    const head = doc.head();
+    const head2 = doc2.head();
+    var child_node = c.lxb_dom_node_first_child(c.lxb_dom_interface_node(head.raw));
+    while (child_node != null) {
+        const clone = c.lxb_html_document_import_node(doc2.raw, c.lxb_dom_interface_node(child_node), true);
+        c.lxb_dom_node_insert_child(c.lxb_dom_interface_node(head2.raw), clone);
+        child_node = c.lxb_dom_node_next(child_node);
+    }
+
+    const newTitle = "My awesome webpage";
+    try doc2.titleSet(newTitle);
+    try std.testing.expectEqualStrings(newTitle, try doc2.title());
+    try std.testing.expectEqualStrings("Hello world!", try doc.title());
 }
