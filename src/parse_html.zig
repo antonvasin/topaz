@@ -193,6 +193,20 @@ pub const Node = struct {
         return .{ .raw = parent_node };
     }
 
+    pub fn walk(self: *const Node, comptime cb: fn (Node, ?*anyopaque) bool) void {
+        const walker = struct {
+            fn walker_cb(node: ?*c.lxb_dom_node_t, ctx: ?*anyopaque) callconv(.c) c.lexbor_action_t {
+                if (node) |actual_node| {
+                    return if (cb(.{ .raw = actual_node }, ctx)) c.LEXBOR_ACTION_OK else c.LEXBOR_ACTION_STOP;
+                } else {
+                    return c.LEXBOR_ACTION_STOP;
+                }
+            }
+        }.walker_cb;
+
+        c.lxb_dom_node_simple_walk(self.raw, walker, null);
+    }
+
     pub fn textContent(self: *const Node) []const u8 {
         var len: usize = 0;
         const text_content = c.lxb_dom_node_text_content(self.raw, &len);
@@ -212,12 +226,12 @@ pub const Node = struct {
 };
 
 const Tag = enum(usize) {
-    // LXB_TAG__UNDEF              = 0x0000,
-    // LXB_TAG__END_OF_FILE        = 0x0001,
-    // LXB_TAG__TEXT               = 0x0002,
-    // LXB_TAG__DOCUMENT           = 0x0003,
-    // LXB_TAG__EM_COMMENT         = 0x0004,
-    // LXB_TAG__EM_DOCTYPE         = 0x0005,
+    tag__undef = 0x0000,
+    tag__end_of_file = 0x0001,
+    tag__text = 0x0002,
+    tag__document = 0x0003,
+    tag__em_comment = 0x0004,
+    tag__em_doctype = 0x0005,
     // // Intentionally has the same value as the first tag below. Marks the beginning of real tags.
     // LXB_TAG__BEGIN              = 0x0006,
     tag_a = 0x0006,
@@ -412,6 +426,7 @@ const Tag = enum(usize) {
     tag_video = 0x00c3,
     tag_wbr = 0x00c4,
     tag_xmp = 0x00c5,
+    tag__last_entry = 0x00c6,
 
     pub fn fromInt(tag: usize) Tag {
         return @enumFromInt(tag);
@@ -511,4 +526,17 @@ test "tree traversal" {
     child = child.next() orelse return error.MissingNode;
     const tag = child.tag();
     try std.testing.expectEqual(Tag.tag_article, tag);
+
+    const walker = struct {
+        fn walk(node: Node, ctx: ?*anyopaque) bool {
+            _ = ctx;
+            if (node.tag() == Tag.tag_a) {
+                node.print() catch return false;
+                return false;
+            }
+            return true;
+        }
+    }.walk;
+
+    child.walk(walker);
 }
