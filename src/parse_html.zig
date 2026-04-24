@@ -13,6 +13,7 @@ pub const Error = error{
     MissingTitle,
     Create,
     Serialization,
+    Insert,
 };
 
 const LxbFilterCtx = extern struct {
@@ -155,8 +156,10 @@ pub const Element = struct {
 pub const Node = struct {
     raw: *c.lxb_dom_node_t,
 
-    pub fn insertChild(self: *const Node, child: Node) void {
-        c.lxb_dom_node_insert_child(self.raw, child.raw);
+    /// Appends child node with validation
+    pub fn appendChild(self: *const Node, child: Node) !void {
+        const status = c.lxb_dom_node_append_child(self.raw, child.raw);
+        if (status != c.LXB_DOM_EXCEPTION_OK) return error.Insert;
     }
 
     pub fn firstChild(self: *const Node) ?Node {
@@ -249,7 +252,7 @@ test "clone and modify element" {
     var child_node = head.firstChild();
     while (child_node) |node| {
         const clone = doc2.importNode(node);
-        head2.insertChild(clone);
+        try head2.appendChild(clone);
         child_node = node.next();
     }
 
