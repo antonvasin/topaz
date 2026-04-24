@@ -51,17 +51,6 @@ fn token_filter(tkz: ?*c.lxb_html_tokenizer_t, token: ?*c.lxb_html_token_t, ctx:
     return token.?;
 }
 
-fn serialize(data: ?[*]const c.lxb_char_t, len: usize, _: ?*anyopaque) callconv(.c) c.lxb_status_t {
-    const text: []const u8 = (data orelse return c.LXB_STATUS_ERROR)[0..len];
-    std.debug.print("{s}", .{text});
-    return c.LXB_STATUS_OK;
-}
-
-fn printNode(node: *c.lxb_dom_node_t) !void {
-    const status = c.lxb_html_serialize_pretty_tree_cb(node, c.LXB_HTML_SERIALIZE_EXT_OPT_UNDEF, 0, &serialize, null);
-    if (status != c.LXB_STATUS_OK) return error.Print;
-}
-
 pub const Document = struct {
     raw: *c.lxb_html_document_t,
 
@@ -116,12 +105,21 @@ pub const Document = struct {
         if (status != c.LXB_STATUS_OK) return error.Title;
     }
 
+    pub fn importNode(self: *const Document, node: Node) Node {
+        const clone = c.lxb_html_document_import_node(self.raw, node.raw, true);
+        return .{ .raw = clone };
+    }
+
     pub fn body(self: *const Document) Element {
         return .{ .raw = c.lxb_dom_interface_element(self.raw.body) };
     }
 
+    pub fn toNode(self: *const Document) Node {
+        return .{ .raw = c.lxb_dom_interface_node(self.raw) };
+    }
+
     pub fn print(self: *const Document) !void {
-        try printNode(c.lxb_dom_interface_node(self.raw));
+        try self.toNode().print();
     }
 
     pub fn deinit(self: *Document) void {
@@ -133,20 +131,53 @@ pub const Element = struct {
     raw: *c.lxb_dom_element_t,
 
     pub fn print(self: *const Element) !void {
-        try printNode(c.lxb_dom_interface_node(self.raw));
+        try self.toNode().print();
     }
 
     pub fn deinit(self: *Element) void {
         _ = c.lxb_dom_node_destroy_deep(self.raw);
     }
 
+    pub fn toNode(self: *const Element) Node {
+        return .{ .raw = c.lxb_dom_interface_node(self.raw) };
+    }
+
     /// Serializes element to string. Caller must destroy parent Document in order to free the memory
     pub fn serialize(self: *const Element) ![]const u8 {
         var str: c.lexbor_str_t = std.mem.zeroes(c.lexbor_str_t);
-        const status = c.lxb_html_serialize_deep_str(c.lxb_dom_interface_node(self.raw), &str);
+        const status = c.lxb_html_serialize_deep_str(self.toNode().raw, &str);
         if (status != c.LXB_STATUS_OK) return error.Serialization;
 
         return str.data[0..str.length];
+    }
+};
+
+pub const Node = struct {
+    raw: *c.lxb_dom_node_t,
+
+    pub fn insertChild(self: *const Node, child: Node) void {
+        c.lxb_dom_node_insert_child(self.raw, child.raw);
+    }
+
+    pub fn firstChild(self: *const Node) ?Node {
+        const first_node = c.lxb_dom_node_first_child(self.raw) orelse return null;
+        return .{ .raw = first_node };
+    }
+
+    pub fn next(self: *const Node) ?Node {
+        const next_node = c.lxb_dom_node_next(self.raw) orelse return null;
+        return .{ .raw = next_node };
+    }
+
+    pub fn print(self: *const Node) !void {
+        const status = c.lxb_html_serialize_pretty_tree_cb(self.raw, c.LXB_HTML_SERIALIZE_EXT_OPT_UNDEF, 0, &serialize, null);
+        if (status != c.LXB_STATUS_OK) return error.Print;
+    }
+
+    fn serialize(data: ?[*]const c.lxb_char_t, len: usize, _: ?*anyopaque) callconv(.c) c.lxb_status_t {
+        const text: []const u8 = (data orelse return c.LXB_STATUS_ERROR)[0..len];
+        std.debug.print("{s}", .{text});
+        return c.LXB_STATUS_OK;
     }
 };
 
@@ -212,14 +243,14 @@ test "clone and modify element" {
     defer doc.deinit();
     var doc2 = try Document.parse("");
     defer doc2.deinit();
+    const head = doc.head().toNode();
+    const head2 = doc2.head().toNode();
 
-    const head = doc.head();
-    const head2 = doc2.head();
-    var child_node = c.lxb_dom_node_first_child(c.lxb_dom_interface_node(head.raw));
-    while (child_node != null) {
-        const clone = c.lxb_html_document_import_node(doc2.raw, c.lxb_dom_interface_node(child_node), true);
-        c.lxb_dom_node_insert_child(c.lxb_dom_interface_node(head2.raw), clone);
-        child_node = c.lxb_dom_node_next(child_node);
+    var child_node = head.firstChild();
+    while (child_node) |node| {
+        const clone = doc2.importNode(node);
+        head2.insertChild(clone);
+        child_node = node.next();
     }
 
     const newTitle = "My awesome webpage";
