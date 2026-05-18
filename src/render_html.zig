@@ -1,12 +1,15 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const graph = @import("./graph.zig");
-const PageGraph = graph.PageGraph;
-const Page = graph.Page;
-const log = @import("./utils.zig").log;
 const c = @cImport({
     @cInclude("md4c.h");
 });
+const graph = @import("./graph.zig");
+const PageGraph = graph.PageGraph;
+const parser = @import("./parse_html.zig");
+const Document = parser.Document;
+const Element = parser.Element;
+const Page = graph.Page;
+const log = @import("./utils.zig").log;
 
 /// Incrementally builds HTML string with correct indentation.
 /// Caller should not care about neither indentation nor newlines.
@@ -125,10 +128,11 @@ pub const RenderContext = struct {
     }
 
     pub fn writeHtmlHead(self: *RenderContext, page_title: []const u8) !void {
-        const html_head_open = if (self.template) |*tmpl| blk: {
-            const head = tmpl.getHeadPos() orelse return error.MissingTemplateHead;
-            break :blk tmpl.content[head[0]..head[1]];
-        } else 
+        const html_head_open =
+            //     if (self.template) |*tmpl| blk: {
+            //     const head = tmpl.getHeadPos() orelse return error.MissingTemplateHead;
+            //     break :blk tmpl.content[head[0]..head[1]];
+            // } else
             \\<!DOCTYPE html>
             \\<html>
             \\    <head>
@@ -372,22 +376,120 @@ pub const RenderContext = struct {
     }
 };
 
+// - create Document
+// - find <head>
+// - collect <template> tags
+// - find <body>
+//
+//  - setTitle()
+//  - setDescription()
+//  - setOgTags()
+//  - addJs()
+//  - addCss()
+//  - addChild()
+//
+//  data- attributes (slots):
+//    data-topaz-title
+//    data-topaz-description
+//    data-topaz-body
+//    data-topaz-backlinks
+//    data-topaz-forwardlinks
+//    data-topaz-table-of-contents
+//
+//  components (<templates>s):
+//    topaz-body
+//    topaz-backlinks
+//    topaz-forwardlinks
+//    topaz-table-of-contents
 pub const Template = struct {
-    const Pos = struct { usize, usize };
     content: []const u8,
-    // start - title
-    head: ?Pos = null,
-    // // title - body start
-    body: ?Pos = null,
-    // // body end - end
-    // tail: Pos,
+    tmpl: Document,
+    doc: Document,
 
-    pub fn getHeadPos(self: *Template) ?Pos {
-        if (self.head) |h| return h;
-        const head_close = std.mem.indexOf(u8, self.content, "</head>") orelse return null;
-        const nl = std.mem.lastIndexOfScalar(u8, self.content[0..head_close], '\n') orelse return null;
-        const h: Pos = .{ 0, nl + 1 };
-        self.head = h;
-        return h;
+    pub fn init(html: []const u8) !Template {
+        const tmpl = try Document.parse(html);
+        const doc = try Document.parse("");
+
+        // Clone <head>
+        const tmpl_head = tmpl.head().toNode();
+        const doc_head = doc.head().toNode();
+        var cur_child_node = tmpl_head.firstChild();
+        while (cur_child_node) |node| {
+            const clone = doc.importNode(node);
+            try doc_head.appendChild(clone);
+            cur_child_node = node.next();
+        }
+
+        return .{
+            .tmpl = tmpl,
+            .content = html,
+            .doc = doc,
+        };
+    }
+
+    /// Sets content of or creates `<meta name="description" />` tag
+    pub fn setDescription(self: *const Template, text: []const u8) !void {
+        var meta_tags = try self.doc.findByTag(self.doc.head(), "meta");
+        defer meta_tags.deinit();
+        var description: ?Element = null;
+        for (meta_tags.items()) |el| {
+            if (std.mem.eql(u8, el.getAttribute("name"), "description")) description = el;
+        }
+
+        if (description) |desc| {
+            try desc.setAttribute("content", text);
+        } else {
+            const meta = try self.doc.createElement("meta");
+            try meta.setAttribute("name", "description");
+            try meta.setAttribute("content", text);
+            try self.doc.head().toNode().appendChild(meta.toNode());
+        }
+    }
+
+    pub fn deinit(self: *Template) void {
+        self.tmpl.deinit();
+        self.doc.deinit();
     }
 };
+
+const html_tmpl_input =
+    \\<!doctype html>
+    \\<html>
+    \\<head><title>Hello world!</title></head>
+    \\<body>Hello</body>
+    \\</html>
+;
+
+test "set title" {
+    var tmpl = try Template.init(html_tmpl_input);
+    defer tmpl.deinit();
+    try tmpl.doc.titleSet("New Title");
+    try std.testing.expectEqualStrings("<title>New Title</title>", try tmpl.doc.head().serialize());
+}
+
+test "set description" {
+    var tmpl = try Template.init(html_tmpl_input);
+    defer tmpl.deinit();
+    try tmpl.setDescription("New Description");
+    try std.testing.expectEqualStrings(
+        "<title>Hello world!</title><meta name=\"description\" content=\"New Description\">",
+        try tmpl.doc.head().serialize(),
+    );
+}
+
+test "update description" {
+    const html_tmpl_with_title =
+        \\<!doctype html>
+        \\<html>
+        \\<head><title>Hello world!</title><meta name="description" content="Old Description" /></head>
+        \\<body>Hello</body>
+        \\</html>
+    ;
+    var tmpl = try Template.init(html_tmpl_with_title);
+    defer tmpl.deinit();
+    try tmpl.setDescription("New Description");
+    try std.testing.expectEqualStrings(
+        "<title>Hello world!</title><meta name=\"description\" content=\"New Description\">",
+        try tmpl.doc.head().serialize(),
+    );
+}

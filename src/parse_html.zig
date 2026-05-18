@@ -111,6 +111,25 @@ pub const Document = struct {
         return .{ .raw = clone };
     }
 
+    pub fn createElement(self: *const Document, local_name: []const u8) !Element {
+        const el = c.lxb_dom_document_create_element(
+            &self.raw.dom_document,
+            local_name.ptr,
+            local_name.len,
+            null,
+        );
+        if (el == null) return error.Create;
+        return .{ .raw = el };
+    }
+
+    pub fn findByTag(self: *const Document, root: Element, tag_name: []const u8) !Collection {
+        const coll: *c.lxb_dom_collection_t = c.lxb_dom_collection_make(&self.raw.dom_document, 16);
+        const status = c.lxb_dom_elements_by_tag_name(root.raw, coll, tag_name.ptr, tag_name.len);
+        if (status != c.LXB_STATUS_OK) return error.MissingNode;
+
+        return .{ .raw = coll };
+    }
+
     pub fn body(self: *const Document) Element {
         return .{ .raw = c.lxb_dom_interface_element(self.raw.body) };
     }
@@ -128,7 +147,8 @@ pub const Document = struct {
     }
 };
 
-pub const Element = struct {
+// XXX: declaring as `extern`, so our .raw alligns with internal lxb_dom_element_t when used as part of Collection
+pub const Element = extern struct {
     raw: *c.lxb_dom_element_t,
 
     pub fn print(self: *const Element) !void {
@@ -141,6 +161,23 @@ pub const Element = struct {
 
     pub fn toNode(self: *const Element) Node {
         return .{ .raw = c.lxb_dom_interface_node(self.raw) };
+    }
+
+    pub fn getAttribute(self: *const Element, name: []const u8) []const u8 {
+        var value_len: usize = 0;
+        const value: [*c]const c.lxb_char_t = c.lxb_dom_element_get_attribute(self.raw, name.ptr, name.len, &value_len);
+        return value[0..value_len];
+    }
+
+    pub fn setAttribute(self: *const Element, name: []const u8, value: []const u8) !void {
+        const attr = c.lxb_dom_element_set_attribute(
+            self.raw,
+            name.ptr,
+            name.len,
+            value.ptr,
+            value.len,
+        );
+        if (attr == null) return error.Insert;
     }
 
     /// Serializes element to string. Caller must destroy parent Document in order to free the memory
@@ -220,6 +257,20 @@ pub const Node = struct {
         const text: []const u8 = (data orelse return c.LXB_STATUS_ERROR)[0..len];
         std.debug.print("{s}", .{text});
         return c.LXB_STATUS_OK;
+    }
+};
+
+pub const Collection = struct {
+    raw: *c.lxb_dom_collection_t,
+
+    pub fn items(self: *const Collection) []Element {
+        const ary = &self.raw.array;
+        const ptr: [*]Element = @ptrCast(ary.list);
+        return ptr[0..ary.length];
+    }
+
+    pub fn deinit(self: *Collection) void {
+        _ = c.lxb_dom_collection_destroy(self.raw, true);
     }
 };
 

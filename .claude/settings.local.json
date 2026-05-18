@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(zig build *)",
+      "Bash(echo \"EXIT=$?\")"
+    ]
+  }
+}
