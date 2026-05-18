@@ -1,29 +1,37 @@
 <!doctype html>
 <html>
-    <head>
-        <title>Template</title>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-    </head>
 
-    <body>
-        <template id="page">
-            <nav>
-                <slot name="page-nav">PAGE NAV</slot>
-            </nav>
+<head>
+    <title>Template</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="/public/global.css" />
+</head>
 
-            <article>
-                <h1>
-                    <slot name="page-title">PAGE TITLE</slot>
-                </h1>
-                <section>
-                    <slot name="table-of-contents">TABLE OF CONTENTS</slot>
-                </section>
+<body>
+    <template id="page">
+        <article>
+            <h1>
+                <slot name="topaz-page-title">PAGE TITLE</slot>
+            </h1>
+            <section>
+                <slot name="topaz-table-of-contents">TABLE OF CONTENTS</slot>
+            </section>
 
-                <section>
-                    <slot name="page-body">PAGE BODY</slot>
-                </section>
-            </article>
-        </template>
-    </body>
+            <section>
+                <slot name="topaz-page-body">PAGE BODY</slot>
+            </section>
+        </article>
+    </template>
+
+    <main>
+        <header>
+            <h1 data-topaz-page-title></h1>
+        </header>
+
+        <article data-topaz-page-body>
+        </article>
+    </main>
+</body>
+
 </html>
