@@ -24,36 +24,6 @@ const LxbFilterCtx = extern struct {
     skipped: c_uint,
 };
 
-fn token_filter(tkz: ?*c.lxb_html_tokenizer_t, token: ?*c.lxb_html_token_t, ctx: ?*anyopaque) callconv(.c) *c.lxb_html_token_t {
-    const fctx = @as(*LxbFilterCtx, @ptrCast(@alignCast(ctx)));
-
-    const tag = token.?.*.tag_id;
-    switch (tag) {
-        c.LXB_TAG__TEXT => {},
-        c.LXB_TAG__EM_COMMENT => {
-            fctx.skipped += 1;
-            return token.?;
-        },
-        else => return fctx.original_callback.?(tkz, token, fctx.original_ctx),
-    }
-
-    // if (tag_id != c.LXB_TAG__TEXT or ) return fctx.original_callback.?(tkz, token, fctx.original_ctx);
-
-    // Check if text is whitespace-only
-    const len: usize = @intFromPtr(token.?.text_end) - @intFromPtr(token.?.text_start);
-    const text: []const u8 = token.?.text_start[0..len];
-    for (text) |char| {
-        switch (char) {
-            '\t', '\n', '\x0C', '\r', ' ' => {},
-            else => return fctx.original_callback.?(tkz, token, fctx.original_ctx),
-        }
-    }
-
-    fctx.skipped += 1;
-    // std.debug.print("Skipped whitespace only token ({d}b)\n", .{text.len});
-    return token.?;
-}
-
 pub const Document = struct {
     raw: *c.lxb_html_document_t,
 
@@ -90,6 +60,36 @@ pub const Document = struct {
         const doc = c.lxb_html_parse(parser, html, html_len);
         if (doc == null) return error.Parse;
         return .{ .raw = doc };
+    }
+
+    fn token_filter(tkz: ?*c.lxb_html_tokenizer_t, token: ?*c.lxb_html_token_t, ctx: ?*anyopaque) callconv(.c) *c.lxb_html_token_t {
+        const fctx = @as(*LxbFilterCtx, @ptrCast(@alignCast(ctx)));
+
+        const tag = token.?.*.tag_id;
+        switch (tag) {
+            c.LXB_TAG__TEXT => {},
+            c.LXB_TAG__EM_COMMENT => {
+                fctx.skipped += 1;
+                return token.?;
+            },
+            else => return fctx.original_callback.?(tkz, token, fctx.original_ctx),
+        }
+
+        // if (tag_id != c.LXB_TAG__TEXT or ) return fctx.original_callback.?(tkz, token, fctx.original_ctx);
+
+        // Check if text is whitespace-only
+        const len: usize = @intFromPtr(token.?.text_end) - @intFromPtr(token.?.text_start);
+        const text: []const u8 = token.?.text_start[0..len];
+        for (text) |char| {
+            switch (char) {
+                '\t', '\n', '\x0C', '\r', ' ' => {},
+                else => return fctx.original_callback.?(tkz, token, fctx.original_ctx),
+            }
+        }
+
+        fctx.skipped += 1;
+        // std.debug.print("Skipped whitespace only token ({d}b)\n", .{text.len});
+        return token.?;
     }
 
     pub fn head(self: *const Document) Element {
