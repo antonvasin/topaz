@@ -27,11 +27,9 @@ const LxbFilterCtx = extern struct {
 pub const Document = struct {
     raw: *c.lxb_html_document_t,
 
+    // Initializes empty HTML document with basic structure
     pub fn init() !Document {
-        const doc = c.lxb_html_document_create();
-        if (doc == null) return error.Create;
-        doc.*.ready_state = c.LXB_HTML_DOCUMENT_READY_STATE_COMPLETE;
-        return .{ .raw = doc };
+        return Document.parse("");
     }
 
     /// Parses html document stripping whitespace and comments
@@ -60,6 +58,7 @@ pub const Document = struct {
         return .{ .raw = doc };
     }
 
+    /// Strips comments and whitespace-only nodes
     fn token_filter(tkz: ?*c.lxb_html_tokenizer_t, token: ?*c.lxb_html_token_t, ctx: ?*anyopaque) callconv(.c) *c.lxb_html_token_t {
         const fctx = @as(*LxbFilterCtx, @ptrCast(@alignCast(ctx)));
 

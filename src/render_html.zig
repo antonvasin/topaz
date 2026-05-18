@@ -408,7 +408,7 @@ pub const Template = struct {
 
     pub fn init(html: []const u8) !Template {
         const tmpl = try Document.parse(html);
-        const doc = try Document.parse("");
+        const doc = try Document.init();
 
         // Clone <head>
         const tmpl_head = tmpl.head().toNode();
