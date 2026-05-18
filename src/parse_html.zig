@@ -35,9 +35,7 @@ pub const Document = struct {
     }
 
     /// Parses html document stripping whitespace and comments
-    pub fn parse(html: [*c]const u8) !Document {
-        const html_len = std.mem.len(html);
-
+    pub fn parse(html: []const u8) !Document {
         // initialize the parser
         const parser = c.lxb_html_parser_create();
         defer _ = c.lxb_html_parser_destroy(parser);
@@ -57,7 +55,7 @@ pub const Document = struct {
         // std.debug.print("\nSkipped {d} whitespace-only text token(s).\n\n", .{fctx.skipped});
 
         // parse
-        const doc = c.lxb_html_parse(parser, html, html_len);
+        const doc = c.lxb_html_parse(parser, html.ptr, html.len);
         if (doc == null) return error.Parse;
         return .{ .raw = doc };
     }
@@ -531,7 +529,8 @@ test "tree traversal" {
         fn walk(node: Node, ctx: ?*anyopaque) bool {
             _ = ctx;
             if (node.tag() == Tag.tag_a) {
-                node.print() catch return false;
+                const content = node.firstChild() orelse return false;
+                std.testing.expectEqualStrings(content.textContent(), "link") catch return false;
                 return false;
             }
             return true;
