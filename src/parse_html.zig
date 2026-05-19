@@ -26,36 +26,46 @@ const LxbFilterCtx = extern struct {
 
 pub const Document = struct {
     raw: *c.lxb_html_document_t,
+    parser: *c.lxb_html_parser_t,
+    fctx: *LxbFilterCtx,
 
     // Initializes empty HTML document with basic structure
     pub fn init() !Document {
         return Document.parse("");
     }
 
+    pub fn deinit(self: *Document) void {
+        _ = c.lxb_html_document_destroy(self.raw);
+        _ = c.lxb_html_parser_destroy(self.parser);
+        std.heap.c_allocator.destroy(self.fctx);
+    }
+
     /// Parses html document stripping whitespace and comments
     pub fn parse(html: []const u8) !Document {
         // initialize the parser
         const parser = c.lxb_html_parser_create();
-        defer _ = c.lxb_html_parser_destroy(parser);
+        if (parser == null) return error.Parse;
+        errdefer _ = c.lxb_html_parser_destroy(parser);
         const parser_status = c.lxb_html_parser_init(parser);
         if (parser_status != c.LXB_STATUS_OK) return error.ParserInit;
 
-        // save original callback
+        // FIXME: pass allocator
+        const fctx = try std.heap.c_allocator.create(LxbFilterCtx);
+        errdefer std.heap.c_allocator.destroy(fctx);
+
         const tkz = c.lxb_html_parser_tokenizer(parser);
-        var fctx: LxbFilterCtx = .{
+        fctx.* = .{
             .original_callback = tkz.*.callback_token_done,
             .original_ctx = c.lxb_html_tokenizer_callback_token_done_ctx(tkz).?,
             .skipped = 0,
         };
-
-        // replace callback with own filter
-        c.lxb_html_tokenizer_callback_token_done_set(tkz, token_filter, &fctx);
-        // std.debug.print("\nSkipped {d} whitespace-only text token(s).\n\n", .{fctx.skipped});
+        c.lxb_html_tokenizer_callback_token_done_set(tkz, token_filter, fctx);
 
         // parse
         const doc = c.lxb_html_parse(parser, html.ptr, html.len);
         if (doc == null) return error.Parse;
-        return .{ .raw = doc };
+        c.lxb_html_parser_clean(parser);
+        return .{ .raw = doc, .parser = parser, .fctx = fctx };
     }
 
     /// Strips comments and whitespace-only nodes
@@ -72,8 +82,6 @@ pub const Document = struct {
             else => return fctx.original_callback.?(tkz, token, fctx.original_ctx),
         }
 
-        // if (tag_id != c.LXB_TAG__TEXT or ) return fctx.original_callback.?(tkz, token, fctx.original_ctx);
-
         // Check if text is whitespace-only
         const len: usize = @intFromPtr(token.?.text_end) - @intFromPtr(token.?.text_start);
         const text: []const u8 = token.?.text_start[0..len];
@@ -85,8 +93,19 @@ pub const Document = struct {
         }
 
         fctx.skipped += 1;
-        // std.debug.print("Skipped whitespace only token ({d}b)\n", .{text.len});
         return token.?;
+    }
+
+    pub fn importFragment(self: *const Document, root: Element, html: []const u8) !void {
+        const node: Node = .{ .raw = c.lxb_html_parse_fragment(self.parser, c.lxb_html_interface_element(root.raw), html.ptr, html.len) };
+
+        const body_node = self.body().toNode();
+        var child_node = node.firstChild();
+        while (child_node) |child| {
+            const clone = self.importNode(child);
+            try body_node.appendChild(clone);
+            child_node = node.next();
+        }
     }
 
     pub fn head(self: *const Document) Element {
@@ -139,10 +158,6 @@ pub const Document = struct {
 
     pub fn print(self: *const Document) !void {
         try self.toNode().print();
-    }
-
-    pub fn deinit(self: *Document) void {
-        _ = c.lxb_html_document_destroy(self.raw);
     }
 };
 
@@ -588,4 +603,12 @@ test "tree traversal" {
     }.walk;
 
     child.walk(walker);
+}
+
+test "import HTML fragment" {
+    var doc = try Document.parse(test_html_doc);
+    defer doc.deinit();
+    const fragment = "<p>New content <img src=\"cat.png\"></p>";
+    try doc.importFragment(doc.body(), fragment);
+    try std.testing.expectStringEndsWith(try doc.body().serialize(), fragment);
 }
