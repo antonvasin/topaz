@@ -1,12 +1,15 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const Parser = @import("./md.zig").Parser;
-const RenderContext = @import("./render_html.zig").RenderContext;
+const md = @import("./md.zig");
+const render_html = @import("./render_html.zig");
 const graph = @import("./graph.zig");
-const PageGraph = graph.PageGraph;
-const Page = graph.Page;
 const log = @import("./utils.zig").log;
 const parse_html = @import("./parse_html.zig");
+
+const RenderContext = render_html.RenderContext;
+const PageGraph = graph.PageGraph;
+const Page = graph.Page;
+const Parser = md.Parser;
 
 const print = std.debug.print;
 const mem = std.mem;
@@ -145,7 +148,11 @@ pub fn main() !void {
         try processFile(allocator, path, &page_graph, &config);
         const page_name = path[0 .. path.len - 3];
         var ctx = try RenderContext.init(allocator, &page_graph);
-        if (config.template_file) |template| ctx.template = .{ .content = template };
+        if (config.template_file) |template| {
+            try ctx.setTemplate(template);
+        } else {
+            try ctx.setTemplate("");
+        }
         ctx.cur_page = page_name;
         try contexts.append(allocator, ctx);
     }
@@ -153,7 +160,6 @@ pub fn main() !void {
     // Second pass: parse markdown and index blocks/links
     for (page_graph.page_list.items, 0..) |*page, i| {
         if (page.meta.skip) continue;
-        try contexts.items[i].writeHtmlHead(page.meta.title);
         parser.parse(page.markdown, &contexts.items[i]);
     }
 
@@ -162,9 +168,8 @@ pub fn main() !void {
         if (page.meta.skip) continue;
         log.debug("Writing {s}", .{page.out_path});
         var ctx = &contexts.items[i];
-        // TODO: write header/footer to separate bufs so we can prepend generated HTML later
-        try ctx.writeFooter();
-        try ctx.writeHtmlTail();
+        try ctx.writeHtmlHead(page.meta.title);
+        try ctx.writeContents();
 
         const dir_path = if (std.fs.path.dirname(page.out_path)) |dir|
             try std.fs.path.join(allocator, &[_][]const u8{ config.output_path, dir })
@@ -175,7 +180,7 @@ pub fn main() !void {
         try std.fs.cwd().makePath(dir_path);
         const dest_file = try std.fs.cwd().createFile(out_path, .{});
         defer dest_file.close();
-        try dest_file.writeAll(ctx.buf.items);
+        try dest_file.writeAll(try ctx.serialize());
     }
 }
 
@@ -216,70 +221,9 @@ test "Page" {
     }
 }
 
-test "RenderContext" {
-    const allocator = std.testing.allocator;
-
-    var page_graph = try PageGraph.init(allocator);
-    var ctx = try RenderContext.init(allocator, &page_graph);
-    defer ctx.deinit();
-
-    try ctx.writeHtmlHead("Page Title");
-    try ctx.writeOpen("<h1>");
-    try ctx.writeString("Page ");
-    try ctx.writeString("<em>");
-    try ctx.writeString("Title");
-    try ctx.writeString("</em>");
-    try ctx.writeClose("</h1>");
-    try ctx.writeOpen("<p>");
-    try ctx.writeString("Paragraph text.");
-    try ctx.writeOpen("<ul>");
-    for (0..3) |_| {
-        try ctx.writeOpen("<li>");
-        try ctx.writeString("List item");
-        try ctx.writeClose("</li>");
-    }
-    try ctx.writeClose("</ul>");
-    try ctx.writeClose("</p>");
-    try ctx.writeHtmlTail();
-
-    const buf =
-        \\<!DOCTYPE html>
-        \\<html>
-        \\    <head>
-        \\        <meta charset="UTF-8">
-        \\        <meta name="generator" content="topaz">
-        \\        <title>Page Title</title>
-        \\    </head>
-        \\    <body>
-        \\        <h1>
-        \\            Page <em>Title</em>
-        \\        </h1>
-        \\        <p>
-        \\            Paragraph text.
-        \\            <ul>
-        \\                <li>
-        \\                    List item
-        \\                </li>
-        \\                <li>
-        \\                    List item
-        \\                </li>
-        \\                <li>
-        \\                    List item
-        \\                </li>
-        \\            </ul>
-        \\        </p>
-        \\    </body>
-        \\</html>
-        \\
-    ;
-
-    testing.expect(mem.eql(u8, ctx.buf.items, buf)) catch |err| {
-        print("\n\ngot:\n---\n{s}\n---\n\nexpected:\n---\n{s}\n---\n", .{ ctx.buf.items, buf });
-        return err;
-    };
-}
-
-// FIXME:
 test {
     _ = parse_html;
+    _ = render_html;
+    _ = md;
+    _ = graph;
 }

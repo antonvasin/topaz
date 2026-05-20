@@ -128,27 +128,17 @@ pub const RenderContext = struct {
     }
 
     pub fn writeHtmlHead(self: *RenderContext, page_title: []const u8) !void {
-        const html_head_open =
-            //     if (self.template) |*tmpl| blk: {
-            //     const head = tmpl.getHeadPos() orelse return error.MissingTemplateHead;
-            //     break :blk tmpl.content[head[0]..head[1]];
-            // } else
-            \\<!DOCTYPE html>
-            \\<html>
-            \\    <head>
-            \\        <meta charset="UTF-8">
-            \\
-        ;
-        try self.write(html_head_open);
-        self.current_level = 2;
+        if (self.template) |tmpl| {
+            try tmpl.doc.titleSet(page_title);
+            _ = try tmpl.addMeta("generator", "topaz");
+        }
+    }
 
-        try self.writeString("<meta name=\"generator\" content=\"topaz\">\n");
-        var title_buf: [1024]u8 = undefined;
-        const title = try std.fmt.bufPrint(&title_buf, "<title>{s}</title>\n", .{page_title});
-        try self.writeString(title);
-
-        try self.writeClose("</head>");
-        try self.writeOpen("<body>");
+    pub fn writeContents(self: *const RenderContext) !void {
+        if (self.template) |tmpl| {
+            const body = tmpl.doc.body();
+            try tmpl.doc.importFragment(body, self.buf.items);
+        }
     }
 
     pub fn writeHtmlTail(self: *RenderContext) !void {
@@ -219,6 +209,14 @@ pub const RenderContext = struct {
             }
         }
         try self.writeClose("</footer>");
+    }
+
+    pub fn serialize(self: *const RenderContext) ![]const u8 {
+        if (self.template) |tmpl| {
+            const str = try tmpl.doc.serialize();
+            return str.toSlice();
+        }
+        return error.Template;
     }
 
     pub fn renderText(self: *RenderContext, text_type: c.MD_TEXTTYPE, data: []const u8) !void {
@@ -374,6 +372,10 @@ pub const RenderContext = struct {
             }
         }
     }
+
+    pub fn setTemplate(self: *RenderContext, html: []const u8) !void {
+        self.template = try Template.init(html);
+    }
 };
 
 // - create Document
@@ -401,6 +403,8 @@ pub const RenderContext = struct {
 //    topaz-backlinks
 //    topaz-forwardlinks
 //    topaz-table-of-contents
+
+/// Parses HTML template and uses it to build resulting document
 pub const Template = struct {
     content: []const u8,
     tmpl: Document,
@@ -409,6 +413,7 @@ pub const Template = struct {
     pub fn init(html: []const u8) !Template {
         const tmpl = try Document.parse(html);
         const doc = try Document.init();
+        doc.setDoctype();
 
         // Clone <head>
         const tmpl_head = tmpl.head().toNode();
@@ -429,21 +434,27 @@ pub const Template = struct {
 
     /// Sets content of or creates `<meta name="description" />` tag
     pub fn setDescription(self: *const Template, text: []const u8) !void {
+        const name = "description";
         var meta_tags = try self.doc.findByTag(self.doc.head(), "meta");
         defer meta_tags.deinit();
         var description: ?Element = null;
         for (meta_tags.items()) |el| {
-            if (std.mem.eql(u8, el.getAttribute("name"), "description")) description = el;
+            if (std.mem.eql(u8, el.getAttribute("name"), name)) description = el;
         }
 
         if (description) |desc| {
             try desc.setAttribute("content", text);
         } else {
-            const meta = try self.doc.createElement("meta");
-            try meta.setAttribute("name", "description");
-            try meta.setAttribute("content", text);
-            try self.doc.head().toNode().appendChild(meta.toNode());
+            _ = try self.addMeta(name, text);
         }
+    }
+
+    pub fn addMeta(self: *const Template, name: []const u8, content: []const u8) !Element {
+        const meta = try self.doc.createElement("meta");
+        try meta.setAttribute("name", name);
+        try meta.setAttribute("content", content);
+        try self.doc.head().toNode().appendChild(meta.toNode());
+        return meta;
     }
 
     pub fn deinit(self: *Template) void {
@@ -451,6 +462,81 @@ pub const Template = struct {
         self.doc.deinit();
     }
 };
+
+test "RenderContext serialize" {
+    const allocator = std.testing.allocator;
+
+    var page_graph = try PageGraph.init(allocator);
+    var ctx = try RenderContext.init(allocator, &page_graph);
+    try ctx.setTemplate("");
+    defer ctx.deinit();
+
+    try ctx.writeHtmlHead("Page Title");
+    try ctx.writeOpen("<h1>");
+    try ctx.writeString("Page ");
+    try ctx.writeString("<em>");
+    try ctx.writeString("Title");
+    try ctx.writeString("</em>");
+    try ctx.writeClose("</h1>");
+    try ctx.writeOpen("<p>");
+    try ctx.writeString("Paragraph text.");
+    try ctx.writeClose("</p>");
+    try ctx.writeOpen("<ul>");
+    for (0..3) |_| {
+        try ctx.writeOpen("<li>");
+        try ctx.writeString("List item");
+        try ctx.writeClose("</li>");
+    }
+    try ctx.writeClose("</ul>");
+    try ctx.writeContents();
+
+    // const buf =
+    //     \\<!DOCTYPE html>
+    //     \\<html>
+    //     \\<head>
+    //     \\    <title>Page Title</title>
+    //     \\    <meta name="generator" content="topaz">
+    //     \\</head>
+    //     \\<body>
+    //     \\    <h1>
+    //     \\        Page <em>Title</em>
+    //     \\    </h1>
+    //     \\    <p>
+    //     \\        Paragraph text.
+    //     \\    </p>
+    //     \\    <ul>
+    //     \\        <li>
+    //     \\            List item
+    //     \\        </li>
+    //     \\        <li>
+    //     \\            List item
+    //     \\        </li>
+    //     \\        <li>
+    //     \\            List item
+    //     \\        </li>
+    //     \\    </ul>
+    //     \\</body>
+    //     \\</html>
+    //     \\
+    // ;
+
+    // FIXME: pretty print
+    const res =
+        \\<!DOCTYPE html><html><head><title>Page Title</title><meta name="generator" content="topaz"></head><body><h1>
+        \\    Page <em>Title</em></h1><p>
+        \\    Paragraph text.
+        \\</p><ul><li>
+        \\        List item
+        \\    </li><li>
+        \\        List item
+        \\    </li><li>
+        \\        List item
+        \\    </li></ul></body></html>
+    ;
+
+    const str = try ctx.serialize();
+    try std.testing.expectEqualStrings(res, str);
+}
 
 const html_tmpl_input =
     \\<!doctype html>

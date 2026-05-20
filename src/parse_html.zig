@@ -5,6 +5,7 @@ const mem = std.mem;
 const c = @cImport({
     @cInclude("lexbor/html/html.h");
     @cInclude("lexbor/dom/interfaces/element.h");
+    @cInclude("lexbor/dom/interfaces/document_type.h");
 });
 
 pub const Error = error{
@@ -96,15 +97,15 @@ pub const Document = struct {
         return token.?;
     }
 
+    /// Parse HTML fragment and append it to <body>
     pub fn importFragment(self: *const Document, root: Element, html: []const u8) !void {
         const node: Node = .{ .raw = c.lxb_html_parse_fragment(self.parser, c.lxb_html_interface_element(root.raw), html.ptr, html.len) };
 
-        const body_node = self.body().toNode();
         var child_node = node.firstChild();
         while (child_node) |child| {
             const clone = self.importNode(child);
-            try body_node.appendChild(clone);
-            child_node = node.next();
+            try root.toNode().appendChild(clone);
+            child_node = child.next();
         }
     }
 
@@ -158,6 +159,36 @@ pub const Document = struct {
 
     pub fn print(self: *const Document) !void {
         try self.toNode().print();
+    }
+
+    pub fn setDoctype(self: *const Document) void {
+        if (self.raw.dom_document.doctype == null) {
+            const doctype = c.lxb_dom_document_type_interface_create(&self.raw.dom_document);
+            c.lxb_dom_document_attach_doctype(&self.raw.dom_document, doctype);
+
+            c.lxb_dom_node_insert_before(c.lxb_dom_interface_node(self.raw.dom_document.element), c.lxb_dom_interface_node(doctype));
+        }
+    }
+
+    pub fn serialize(self: *const Document) !LXBString {
+        var result: LXBString = .{ .raw = std.mem.zeroes(c.lexbor_str_t), .doc = self };
+        const status = c.lxb_html_serialize_tree_str(self.toNode().raw, &result.raw);
+        if (status != c.LXB_STATUS_OK) return error.Serialization;
+
+        return result;
+    }
+};
+
+pub const LXBString = struct {
+    raw: c.lexbor_str_t,
+    doc: *const Document,
+
+    pub fn toSlice(self: *const LXBString) []const u8 {
+        return self.raw.data[0..self.raw.length];
+    }
+
+    pub fn deinit(self: *LXBString) void {
+        _ = c.lexbor_str_destroy(&self.raw, self.doc.raw.dom_document.text, false);
     }
 };
 
@@ -522,6 +553,15 @@ test "parse HTML" {
     var text_len: usize = 0;
     const text = c.lxb_dom_node_text_content(first_child, &text_len);
     try std.testing.expectEqualStrings("Hello!", text[0..text_len]);
+}
+
+test "serialize document" {
+    var doc = try Document.parse(test_html_doc);
+    defer doc.deinit();
+
+    var str = try doc.serialize();
+    defer str.deinit();
+    try std.testing.expectStringEndsWith(str.toSlice(), "</html>");
 }
 
 test "get and set title" {
