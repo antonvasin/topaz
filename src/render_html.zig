@@ -8,6 +8,7 @@ const PageGraph = graph.PageGraph;
 const parser = @import("./parse_html.zig");
 const Document = parser.Document;
 const Element = parser.Element;
+const Node = parser.Node;
 const Page = graph.Page;
 const log = @import("./utils.zig").log;
 
@@ -137,9 +138,15 @@ pub const RenderContext = struct {
         }
     }
 
-    pub fn writeContents(self: *const RenderContext) !void {
+    pub fn writeContents(self: *const RenderContext, title: ?[]const u8) !void {
         if (self.template) |tmpl| {
             try tmpl.writeContents(self.buf.items);
+            if (title) |page_title| {
+                if (tmpl.title_slot) |slot| {
+                    const title_text = try Node.createText(tmpl.doc, page_title);
+                    try slot.toNode().appendChild(title_text);
+                }
+            }
         }
     }
 
@@ -381,25 +388,12 @@ pub const RenderContext = struct {
     }
 };
 
-// - create Document
-// - find <head>
-// - collect <template> tags
-// - find <body>
-//
-//  - setTitle()
-//  - setDescription()
-//  - setOgTags()
-//  - addJs()
-//  - addCss()
-//  - addChild()
-//
 //  data- attributes (slots):
-//    data-topaz-title
-//    data-topaz-description
-//    data-topaz-body
-//    data-topaz-backlinks
-//    data-topaz-forwardlinks
-//    data-topaz-table-of-contents
+//    [x] data-topaz-body
+//    [ ] data-topaz-title
+//    [ ] data-topaz-backlinks
+//    [ ] data-topaz-forwardlinks
+//    [ ] data-topaz-table-of-contents
 //
 //  components (<templates>s):
 //    topaz-body
@@ -412,7 +406,8 @@ pub const Template = struct {
     content: []const u8,
     tmpl: Document,
     doc: Document,
-    content_tmpl: ?Element,
+    content_slot: ?Element,
+    title_slot: ?Element,
 
     pub fn init(html: []const u8) !Template {
         const tmpl = try Document.parse(html);
@@ -440,16 +435,22 @@ pub const Template = struct {
             cur_child_node = node.next();
         }
 
-        var content_tmpl: ?Element = null;
-        var content_tmpl_col = try doc.findByAttr(doc.body(), "data-topaz-body", "");
-        defer content_tmpl_col.deinit();
-        if (content_tmpl_col.len() > 0) content_tmpl = content_tmpl_col.items()[0];
+        var content_slot: ?Element = null;
+        var content_slot_col = try doc.findByAttr(doc.body(), "data-topaz-body", "");
+        defer content_slot_col.deinit();
+        if (content_slot_col.len() > 0) content_slot = content_slot_col.items()[0];
+
+        var title_slot: ?Element = null;
+        var title_slot_col = try doc.findByAttr(doc.body(), "data-topaz-title", "");
+        defer title_slot_col.deinit();
+        if (title_slot_col.len() > 0) title_slot = title_slot_col.items()[0];
 
         return .{
             .tmpl = tmpl,
             .content = html,
             .doc = doc,
-            .content_tmpl = content_tmpl,
+            .content_slot = content_slot,
+            .title_slot = title_slot,
         };
     }
 
@@ -497,7 +498,7 @@ pub const Template = struct {
     }
 
     pub fn writeContents(self: *const Template, contents: []const u8) !void {
-        const root = self.content_tmpl orelse self.doc.body();
+        const root = self.content_slot orelse self.doc.body();
         try self.doc.importFragment(root, contents);
     }
 
@@ -512,16 +513,13 @@ test "RenderContext serialize" {
 
     var page_graph = try PageGraph.init(allocator);
     var ctx = try RenderContext.init(allocator, &page_graph);
-    try ctx.setTemplate("");
+
+    const tmpl = "<!DOCTYPE html><html><head></head><body><h1 data-topaz-title></h1><main data-topaz-body></main></body></html>";
+    try ctx.setTemplate(tmpl);
     defer ctx.deinit();
 
-    try ctx.writeHtmlHead("Page Title");
-    try ctx.writeOpen("<h1>");
-    try ctx.writeString("Page ");
-    try ctx.writeString("<em>");
-    try ctx.writeString("Title");
-    try ctx.writeString("</em>");
-    try ctx.writeClose("</h1>");
+    const title = "Page Title";
+    try ctx.writeHtmlHead(title);
     try ctx.writeOpen("<p>");
     try ctx.writeString("Paragraph text.");
     try ctx.writeClose("</p>");
@@ -532,42 +530,10 @@ test "RenderContext serialize" {
         try ctx.writeClose("</li>");
     }
     try ctx.writeClose("</ul>");
-    try ctx.writeContents();
+    try ctx.writeContents(title);
 
-    // const buf =
-    //     \\<!DOCTYPE html>
-    //     \\<html>
-    //     \\<head>
-    //     \\    <title>Page Title</title>
-    //     \\    <meta name="generator" content="topaz">
-    //     \\</head>
-    //     \\<body>
-    //     \\    <h1>
-    //     \\        Page <em>Title</em>
-    //     \\    </h1>
-    //     \\    <p>
-    //     \\        Paragraph text.
-    //     \\    </p>
-    //     \\    <ul>
-    //     \\        <li>
-    //     \\            List item
-    //     \\        </li>
-    //     \\        <li>
-    //     \\            List item
-    //     \\        </li>
-    //     \\        <li>
-    //     \\            List item
-    //     \\        </li>
-    //     \\    </ul>
-    //     \\</body>
-    //     \\</html>
-    //     \\
-    // ;
-
-    // FIXME: pretty print
     const res =
-        \\<!DOCTYPE html><html><head><title>Page Title</title><meta charset="utf-8"><meta name="generator" content="topaz"></head><body><h1>
-        \\    Page <em>Title</em></h1><p>
+        \\<!DOCTYPE html><html><head><title>Page Title</title><meta charset="utf-8"><meta name="generator" content="topaz"></head><body><h1 data-topaz-title="">Page Title</h1><main data-topaz-body=""><p>
         \\    Paragraph text.
         \\</p><ul><li>
         \\        List item
@@ -575,7 +541,7 @@ test "RenderContext serialize" {
         \\        List item
         \\    </li><li>
         \\        List item
-        \\    </li></ul></body></html>
+        \\    </li></ul></main></body></html>
     ;
 
     const str = try ctx.serialize();
@@ -621,23 +587,5 @@ test "update description" {
     try std.testing.expectEqualStrings(
         "<title>Hello world!</title><meta name=\"description\" content=\"New Description\">",
         try tmpl.doc.head().serialize(),
-    );
-}
-
-test "content template" {
-    const html_tmpl_with_title =
-        \\<!doctype html>
-        \\<html>
-        \\<head><title>Hello world!</title><meta name="description" content="Old Description" /></head>
-        \\<body>Hello<main data-topaz-body></main></body>
-        \\</html>
-    ;
-    var tmpl = try Template.init(html_tmpl_with_title);
-    defer tmpl.deinit();
-    try tmpl.setDescription("New Description");
-    try tmpl.writeContents("content");
-    try std.testing.expectEqualStrings(
-        "Hello<main data-topaz-body=\"\">content</main>",
-        try tmpl.doc.body().serialize(),
     );
 }

@@ -172,7 +172,7 @@ pub fn main() !void {
         log.debug("Writing {s}", .{page.out_path});
         var ctx = &contexts.items[i];
         try ctx.writeHtmlHead(page.meta.title);
-        try ctx.writeContents();
+        try ctx.writeContents(page.meta.title);
 
         const dir_path = if (std.fs.path.dirname(page.out_path)) |dir|
             try std.fs.path.join(allocator, &[_][]const u8{ config.output_path, dir })

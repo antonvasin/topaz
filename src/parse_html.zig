@@ -253,6 +253,12 @@ pub const Node = struct {
         return Tag.fromInt(c.lxb_dom_node_tag_id(self.raw));
     }
 
+    pub fn createText(doc: Document, text: []const u8) !Node {
+        const node = c.lxb_dom_document_create_text_node(&doc.raw.dom_document, text.ptr, text.len);
+        if (node == null) return error.Insert;
+        return .{ .raw = c.lxb_dom_interface_node(node) };
+    }
+
     /// Appends child node with validation
     pub fn appendChild(self: *const Node, child: Node) !void {
         const status = c.lxb_dom_node_append_child(self.raw, child.raw);
