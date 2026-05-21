@@ -132,6 +132,7 @@ pub const RenderContext = struct {
     pub fn writeHtmlHead(self: *RenderContext, page_title: []const u8) !void {
         if (self.template) |tmpl| {
             try tmpl.doc.titleSet(page_title);
+            _ = try tmpl.addCharset();
             _ = try tmpl.addMeta("generator", "topaz");
         }
     }
@@ -456,6 +457,13 @@ pub const Template = struct {
         const meta = try self.doc.createElement("meta");
         try meta.setAttribute("name", name);
         try meta.setAttribute("content", content);
+        try self.doc.head().toNode().appendChild(meta.toNode());
+        return meta;
+    }
+
+    pub fn addCharset(self: *const Template) !Element {
+        const meta = try self.doc.createElement("meta");
+        try meta.setAttribute("charset", "utf-8");
         try self.doc.head().toNode().appendChild(meta.toNode());
         return meta;
     }
