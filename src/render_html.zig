@@ -57,6 +57,8 @@ pub const RenderContext = struct {
     cur_header_text: std.ArrayList(u8),
     cur_header_level: ?Page.HeaderLevel = null,
 
+    cur_code_block_lang: ?[]const u8 = null,
+
     template: ?Template = null,
 
     pub fn init(allocator: std.mem.Allocator, page_graph: *PageGraph) !RenderContext {
@@ -86,8 +88,8 @@ pub const RenderContext = struct {
 
     /// Write string with indentation
     pub fn writeString(self: *RenderContext, str: []const u8) !void {
-        if (self.buf.getLastOrNull()) |last_char| {
-            if (last_char == '\n') try self.indent();
+        if (self.cur_code_block_lang == null) {
+            if (self.buf.getLastOrNull() == '\n') try self.indent();
         }
         // TODO: write to buffer automatically when calling from header tags
         try self.write(str);
@@ -220,14 +222,15 @@ pub const RenderContext = struct {
     }
 
     pub fn renderText(self: *RenderContext, text_type: c.MD_TEXTTYPE, data: []const u8) !void {
-        if (self.buf.getLastOrNull()) |last_char|
-            if (last_char == '\n') try self.indent();
+        if (self.cur_code_block_lang == null) {
+            if (self.buf.getLastOrNull() == '\n') try self.indent();
+        }
 
         switch (text_type) {
             c.MD_TEXT_NULLCHAR => try self.renderUtf8Codepoint(0),
             c.MD_TEXT_HTML => try self.writeString(data),
             c.MD_TEXT_ENTITY => try self.renderEntity(data),
-            c.MD_TEXT_CODE => try self.writeString(data),
+            c.MD_TEXT_CODE => try self.renderHtmlEscaped(data),
             else => try self.renderHtmlEscaped(data),
         }
     }

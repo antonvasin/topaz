@@ -89,9 +89,17 @@ pub const Parser = struct {
                 try ctx.writeOpen("<pre>");
                 try ctx.writeString("<code");
 
-                if (code_detail.lang.text != null and code_detail.lang.size > 0) {
+                // var lang: ?[]const u8 = null;
+
+                const lang = if (code_detail.lang.text != null and code_detail.lang.size > 0)
+                    code_detail.lang.text[0..code_detail.lang.size]
+                else
+                    "text";
+                ctx.cur_code_block_lang = lang;
+
+                if (!std.mem.eql(u8, lang, "text")) {
                     try ctx.writeString(" class=\"language-");
-                    try ctx.renderHtmlEscaped(code_detail.lang.text[0..code_detail.lang.size]);
+                    try ctx.renderHtmlEscaped(lang);
                     try ctx.writeString("\"");
                 }
 
@@ -206,6 +214,7 @@ pub const Parser = struct {
             c.MD_BLOCK_CODE => {
                 try ctx.writeClose("</code>");
                 try ctx.writeClose("</pre>");
+                ctx.cur_code_block_lang = null;
             },
             c.MD_BLOCK_P => try ctx.writeClose("</p>"),
             c.MD_BLOCK_TABLE => try ctx.writeClose("</table>"),
