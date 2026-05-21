@@ -114,7 +114,10 @@ pub fn main() !void {
         var walker = try dir.walk(allocator);
 
         while (try walker.next()) |entry| {
-            if (entry.kind == .file and mem.eql(u8, std.fs.path.extension(entry.basename), ".md")) {
+            var lower: [1024]u8 = undefined;
+            const normalized_basename = std.ascii.lowerString(&lower, entry.basename);
+
+            if (entry.kind == .file and mem.eql(u8, std.fs.path.extension(normalized_basename), ".md") and !mem.eql(u8, normalized_basename, "readme.md")) {
                 const path = try allocator.dupe(u8, entry.path);
                 try input_files.append(allocator, path);
             }
