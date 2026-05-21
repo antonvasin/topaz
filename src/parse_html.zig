@@ -142,11 +142,18 @@ pub const Document = struct {
     }
 
     pub fn findByTag(self: *const Document, root: Element, tag_name: []const u8) !Collection {
-        const coll: *c.lxb_dom_collection_t = c.lxb_dom_collection_make(&self.raw.dom_document, 16);
-        const status = c.lxb_dom_elements_by_tag_name(root.raw, coll, tag_name.ptr, tag_name.len);
+        const col: *c.lxb_dom_collection_t = c.lxb_dom_collection_make(&self.raw.dom_document, 16);
+        const status = c.lxb_dom_elements_by_tag_name(root.raw, col, tag_name.ptr, tag_name.len);
         if (status != c.LXB_STATUS_OK) return error.MissingNode;
 
-        return .{ .raw = coll };
+        return .{ .raw = col };
+    }
+
+    pub fn findByAttr(self: *const Document, root: Element, attr: []const u8, val: []const u8) !Collection {
+        const col: *c.lxb_dom_collection_t = c.lxb_dom_collection_make(&self.raw.dom_document, 16);
+        const status = c.lxb_dom_elements_by_attr(root.raw, col, attr.ptr, attr.len, val.ptr, val.len, true);
+        if (status != c.LXB_STATUS_OK) return error.MissingNode;
+        return .{ .raw = col };
     }
 
     pub fn body(self: *const Document) Element {
@@ -320,6 +327,10 @@ pub const Collection = struct {
 
     pub fn deinit(self: *Collection) void {
         _ = c.lxb_dom_collection_destroy(self.raw, true);
+    }
+
+    pub fn len(self: *Collection) usize {
+        return c.lxb_dom_collection_length(self.raw);
     }
 };
 

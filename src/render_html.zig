@@ -139,8 +139,7 @@ pub const RenderContext = struct {
 
     pub fn writeContents(self: *const RenderContext) !void {
         if (self.template) |tmpl| {
-            const body = tmpl.doc.body();
-            try tmpl.doc.importFragment(body, self.buf.items);
+            try tmpl.writeContents(self.buf.items);
         }
     }
 
@@ -413,6 +412,7 @@ pub const Template = struct {
     content: []const u8,
     tmpl: Document,
     doc: Document,
+    content_tmpl: ?Element,
 
     pub fn init(html: []const u8) !Template {
         const tmpl = try Document.parse(html);
@@ -432,18 +432,24 @@ pub const Template = struct {
         }
 
         // Clone <body>
-        const tmpl_body = tmpl.body().toNode();
-        cur_child_node = tmpl_body.firstChild();
+        const tmpl_body = tmpl.body();
+        cur_child_node = tmpl_body.toNode().firstChild();
         while (cur_child_node) |node| {
             const clone = doc.importNode(node);
             try doc_body.appendChild(clone);
             cur_child_node = node.next();
         }
 
+        var content_tmpl: ?Element = null;
+        var content_tmpl_col = try doc.findByAttr(doc.body(), "data-topaz-body", "");
+        defer content_tmpl_col.deinit();
+        if (content_tmpl_col.len() > 0) content_tmpl = content_tmpl_col.items()[0];
+
         return .{
             .tmpl = tmpl,
             .content = html,
             .doc = doc,
+            .content_tmpl = content_tmpl,
         };
     }
 
@@ -488,6 +494,11 @@ pub const Template = struct {
             try meta.setAttribute("charset", "utf-8");
             try self.doc.head().toNode().appendChild(meta.toNode());
         }
+    }
+
+    pub fn writeContents(self: *const Template, contents: []const u8) !void {
+        const root = self.content_tmpl orelse self.doc.body();
+        try self.doc.importFragment(root, contents);
     }
 
     pub fn deinit(self: *Template) void {
@@ -610,5 +621,23 @@ test "update description" {
     try std.testing.expectEqualStrings(
         "<title>Hello world!</title><meta name=\"description\" content=\"New Description\">",
         try tmpl.doc.head().serialize(),
+    );
+}
+
+test "content template" {
+    const html_tmpl_with_title =
+        \\<!doctype html>
+        \\<html>
+        \\<head><title>Hello world!</title><meta name="description" content="Old Description" /></head>
+        \\<body>Hello<main data-topaz-body></main></body>
+        \\</html>
+    ;
+    var tmpl = try Template.init(html_tmpl_with_title);
+    defer tmpl.deinit();
+    try tmpl.setDescription("New Description");
+    try tmpl.writeContents("content");
+    try std.testing.expectEqualStrings(
+        "Hello<main data-topaz-body=\"\">content</main>",
+        try tmpl.doc.body().serialize(),
     );
 }
