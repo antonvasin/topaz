@@ -208,6 +208,10 @@ pub const Element = extern struct {
         return .{ .raw = c.lxb_dom_interface_node(self.raw) };
     }
 
+    pub fn hasAttrbitue(self: *const Element, attr: []const u8) bool {
+        return c.lxb_dom_element_has_attribute(self.raw, attr.ptr, attr.len);
+    }
+
     pub fn getAttribute(self: *const Element, name: []const u8) []const u8 {
         var value_len: usize = 0;
         const value: [*c]const c.lxb_char_t = c.lxb_dom_element_get_attribute(self.raw, name.ptr, name.len, &value_len);

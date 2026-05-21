@@ -132,7 +132,7 @@ pub const RenderContext = struct {
     pub fn writeHtmlHead(self: *RenderContext, page_title: []const u8) !void {
         if (self.template) |tmpl| {
             try tmpl.doc.titleSet(page_title);
-            _ = try tmpl.addCharset();
+            try tmpl.addCharset();
             _ = try tmpl.addMeta("generator", "topaz");
         }
     }
@@ -472,11 +472,22 @@ pub const Template = struct {
         return meta;
     }
 
-    pub fn addCharset(self: *const Template) !Element {
-        const meta = try self.doc.createElement("meta");
-        try meta.setAttribute("charset", "utf-8");
-        try self.doc.head().toNode().appendChild(meta.toNode());
-        return meta;
+    pub fn addCharset(self: *const Template) !void {
+        var has_charset = false;
+        var meta_tags = try self.doc.findByTag(self.doc.head(), "meta");
+        defer meta_tags.deinit();
+        for (meta_tags.items()) |el| {
+            if (el.hasAttrbitue("charset")) {
+                has_charset = true;
+                break;
+            }
+        }
+
+        if (!has_charset) {
+            const meta = try self.doc.createElement("meta");
+            try meta.setAttribute("charset", "utf-8");
+            try self.doc.head().toNode().appendChild(meta.toNode());
+        }
     }
 
     pub fn deinit(self: *Template) void {
@@ -544,7 +555,7 @@ test "RenderContext serialize" {
 
     // FIXME: pretty print
     const res =
-        \\<!DOCTYPE html><html><head><title>Page Title</title><meta name="generator" content="topaz"></head><body><h1>
+        \\<!DOCTYPE html><html><head><title>Page Title</title><meta charset="utf-8"><meta name="generator" content="topaz"></head><body><h1>
         \\    Page <em>Title</em></h1><p>
         \\    Paragraph text.
         \\</p><ul><li>
