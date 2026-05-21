@@ -419,13 +419,24 @@ pub const Template = struct {
         const doc = try Document.init();
         doc.setDoctype();
 
+        const doc_head = doc.head().toNode();
+        const doc_body = doc.body().toNode();
+
         // Clone <head>
         const tmpl_head = tmpl.head().toNode();
-        const doc_head = doc.head().toNode();
         var cur_child_node = tmpl_head.firstChild();
         while (cur_child_node) |node| {
             const clone = doc.importNode(node);
             try doc_head.appendChild(clone);
+            cur_child_node = node.next();
+        }
+
+        // Clone <body>
+        const tmpl_body = tmpl.body().toNode();
+        cur_child_node = tmpl_body.firstChild();
+        while (cur_child_node) |node| {
+            const clone = doc.importNode(node);
+            try doc_body.appendChild(clone);
             cur_child_node = node.next();
         }
 
