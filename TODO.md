@@ -12,12 +12,12 @@
 ## HTML
 
 - [x] Implement basic HTML renderer
-- [ ] Implement templating
+- [x] Implement templating
 - [ ] Bundle JS & CSS (get dep graph, dedupe, bundle with esbuild)
 - [ ] Copy linked images/files to `/public`
 - [ ] Enhanced client-side navigation, prefetching
 - [ ] Web Components/frameworks support
-- [ ] Replace reserved chars with HTML entities
+- [x] Replace reserved chars with HTML entities
 - [ ] Render formulas with [KaTeX](https://github.com/KaTeX/KaTeX)
 - [ ] Write basic tests for md-html conversion
 - [x] Pretty print HTML
