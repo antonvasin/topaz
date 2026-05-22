@@ -3,7 +3,7 @@
 ## Markdown parsing
 
 - [x] Integrate [`md4c`](https://github.com/mity/md4c)
-- [ ] Generate slugs for URLs and headers
+- [x] Generate slugs for URLs and headers
 - [x] Process Wiki-style links
 - [ ] Add tests for [Git book](https://github.com/progit/progit/tree/master/en)
 - [ ] Add tests for Obsidian vault
@@ -45,8 +45,9 @@
 
 - [x] Pass sources via args
 - [x] Pass output dir via args
-- [ ] Tests for rendered HTML pages
+- [x] Tests for rendered HTML pages
 
 ## Chores
 
 - [x] zig 0.15
+- [ ] zig 0.16
