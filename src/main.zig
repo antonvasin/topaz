@@ -183,7 +183,11 @@ pub fn main() !void {
         try std.fs.cwd().makePath(dir_path);
         const dest_file = try std.fs.cwd().createFile(out_path, .{});
         defer dest_file.close();
-        try dest_file.writeAll(try ctx.serialize());
+        var file_buf: [1024]u8 = undefined;
+        var file_writer = dest_file.writer(&file_buf);
+        const writer = &file_writer.interface;
+        try writer.writeAll(try ctx.serialize());
+        try writer.flush();
     }
 }
 

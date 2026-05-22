@@ -222,6 +222,7 @@ pub const RenderContext = struct {
 
     pub fn serialize(self: *const RenderContext) ![]const u8 {
         if (self.template) |tmpl| {
+            // FIXME: deinit string
             const str = try tmpl.doc.serialize();
             return str.toSlice();
         }
