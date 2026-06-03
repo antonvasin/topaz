@@ -78,6 +78,10 @@ pub fn main() !void {
     const allocator = arena.allocator();
     defer arena.deinit();
 
+    var stdout_buf: [128]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
+    const stdout = &stdout_writer.interface;
+
     var config = Config{ .input_path = ".", .output_path = "topaz-out", .is_debug = false };
 
     const args = try std.process.argsAlloc(allocator);
@@ -100,6 +104,18 @@ pub fn main() !void {
         } else if (mem.startsWith(u8, arg, "--template=")) {
             config.template = arg[11..];
             log.info("Using template {s}", .{config.template.?});
+        } else if (mem.startsWith(u8, arg, "--help")) {
+            const help =
+                \\topaz 0.0.1
+                \\
+                \\  --out=<outdir>              Directory to output rendered HTML
+                \\  --template=<template.html>  HTML Template to use
+                \\  --help                      Print this help message
+                \\
+            ;
+            try stdout.writeAll(help);
+            try stdout.flush();
+            return;
         }
     }
 
