@@ -207,46 +207,6 @@ pub fn main() !void {
     }
 }
 
-test "Page" {
-    const allocator = std.testing.allocator;
-
-    {
-        const buf: []const u8 =
-            \\---
-            \\title: "Note Title"
-            \\---
-            \\
-            \\# Note
-            \\
-            \\Paragraph text
-        ;
-        var page = try Page.init(allocator, "note.md", buf);
-        defer page.deinit(allocator);
-        try testing.expect(mem.eql(u8, page.name, "note"));
-        try testing.expect(mem.eql(u8, page.meta.title, "Note Title"));
-        try testing.expectEqual(page.meta.skip, false);
-    }
-
-    {
-        const buf: []const u8 =
-            \\---
-            \\title: "Note Title"
-            \\publish: false
-            \\---
-            \\# Note
-            \\
-            \\Paragraph text
-        ;
-
-        var page = try Page.init(allocator, "note.md", buf);
-        defer page.deinit(allocator);
-        try testing.expectEqual(page.meta.skip, true);
-    }
-}
-
 test {
-    _ = parse_html;
-    _ = render_html;
-    _ = md;
-    _ = graph;
+    testing.refAllDecls(@This());
 }

@@ -268,3 +268,41 @@ pub const PageGraph = struct {
 
 const LinkValues = std.StringHashMap(Page.Link);
 const Links = std.StringHashMap(LinkValues);
+
+test "Page" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    {
+        const buf: []const u8 =
+            \\---
+            \\title: "Note Title"
+            \\---
+            \\
+            \\# Note
+            \\
+            \\Paragraph text
+        ;
+        var page = try Page.init(allocator, "note.md", buf);
+        defer page.deinit(allocator);
+        try testing.expect(mem.eql(u8, page.name, "note"));
+        try testing.expect(mem.eql(u8, page.meta.title, "Note Title"));
+        try testing.expectEqual(page.meta.skip, false);
+    }
+
+    {
+        const buf: []const u8 =
+            \\---
+            \\title: "Note Title"
+            \\publish: false
+            \\---
+            \\# Note
+            \\
+            \\Paragraph text
+        ;
+
+        var page = try Page.init(allocator, "note.md", buf);
+        defer page.deinit(allocator);
+        try testing.expectEqual(page.meta.skip, true);
+    }
+}
