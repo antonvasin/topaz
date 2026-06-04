@@ -40,6 +40,10 @@
             .url = "https://github.com/lexbor/lexbor/archive/refs/tags/v3.0.0.tar.gz",
             .hash = "N-V-__8AAMxVvAIalChC2bXMLXbWpURCkFNzlDy86Nwguncd",
         },
+        .sqlite = .{
+            .url = "https://www.sqlite.org/2026/sqlite-amalgamation-3530200.zip",
+            .hash = "N-V-__8AALc_rgC04POe18O0LKFRm4ouQpLtL3riscEmWp-Q",
+        },
     },
     .paths = .{
         "build.zig",

@@ -35,6 +35,11 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
+    const sqlite = b.dependency("sqlite", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -90,6 +95,12 @@ pub fn build(b: *std.Build) !void {
     });
     root_module.addIncludePath(lexbor.path("source"));
     root_module.linkLibrary(lexbor_lib);
+
+    root_module.addIncludePath(sqlite.path("."));
+    root_module.addCSourceFile(.{
+        .file = sqlite.path("sqlite3.c"),
+        .flags = &.{"-DSQLITE_ENABLE_FTS5"},
+    });
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
