@@ -16,6 +16,7 @@ const mem = std.mem;
 const assert = std.debug.assert;
 const testing = std.testing;
 
+const TOPAZ_VERSION = "0.0.1";
 var debug_enabled: bool = false;
 
 pub const std_options: std.Options = .{
@@ -106,14 +107,14 @@ pub fn main() !void {
             log.info("Using template {s}", .{config.template.?});
         } else if (mem.startsWith(u8, arg, "--help")) {
             const help =
-                \\topaz 0.0.1
+                \\topaz {s}
                 \\
                 \\  --out=<outdir>              Directory to output rendered HTML
                 \\  --template=<template.html>  HTML Template to use
                 \\  --help                      Print this help message
                 \\
             ;
-            try stdout.writeAll(help);
+            try stdout.print(help, .{TOPAZ_VERSION});
             try stdout.flush();
             return;
         }
