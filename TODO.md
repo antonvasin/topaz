@@ -24,7 +24,6 @@
 - [x] zig 0.15
 - [x] Basic templates
 - [x] `--help` argument
-- [ ] Templates: support backlinks
 
 ### 0.0.3
 
@@ -40,6 +39,8 @@
 
 ### HTML
 
+- [ ] Templates: support backlinks
+- [ ] Templates: table of contents
 - [ ] Bundle JS & CSS (get dep graph, dedupe, bundle with esbuild)
 - [ ] Copy linked images/files to `/public`
 - [ ] Enhanced client-side navigation, prefetching
