@@ -50,13 +50,14 @@ fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: *Pag
     };
     defer allocator.free(full_path);
 
-    const file_size = try file.getEndPos();
-    print("Processing {s} ({d}b)\n", .{ file_path, file_size });
-    const buf = try allocator.alloc(u8, file_size);
+    // const filesize = try file.getEndPos();
+    const stat = try file.stat();
+    print("Processing {s} ({d}b)\n", .{ file_path, stat.size });
+    const buf = try allocator.alloc(u8, stat.size);
     errdefer allocator.free(buf);
     _ = try file.readAll(buf);
 
-    const page = try Page.init(allocator, file_path, buf);
+    const page = try Page.init(allocator, file_path, buf, stat);
 
     try page_graph.addPage(page);
 

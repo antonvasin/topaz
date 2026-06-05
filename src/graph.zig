@@ -16,7 +16,9 @@ pub const Page = struct {
     pub const Meta = struct {
         title: []const u8,
         url: ?[]const u8,
-        date: ?[]const u8 = null,
+        size: u64,
+        created_at: []const u8,
+        updated_at: []const u8,
         skip: bool = false,
     };
 
@@ -56,7 +58,7 @@ pub const Page = struct {
         level: HeaderLevel,
     };
 
-    pub fn init(allocator: mem.Allocator, file_path: []const u8, buf: []const u8) !Page {
+    pub fn init(allocator: mem.Allocator, file_path: []const u8, buf: []const u8, stat: std.fs.File.Stat) !Page {
         // input_folder  /note-01           .md
         // input_folder  /subfolder/note-02 .md
         //
@@ -83,10 +85,16 @@ pub const Page = struct {
 
         const frontmatter = if (yaml_end > 0) buf[0..yaml_end] else null;
 
+        const created_at = try allocator.alloc(u8, 32);
+        const updated_at = try allocator.alloc(u8, 32);
+
         var meta = Page.Meta{
             .title = try allocator.dupe(u8, name),
             .skip = false,
             .url = name,
+            .size = stat.size,
+            .created_at = formatTimestamp(created_at, @intCast(@divTrunc(stat.ctime, std.time.ns_per_s))),
+            .updated_at = formatTimestamp(updated_at, @intCast(@divTrunc(stat.mtime, std.time.ns_per_s))),
         };
 
         if (frontmatter) |yml| {
@@ -161,6 +169,29 @@ pub const Page = struct {
             .frontmatter = frontmatter,
             .meta = meta,
         };
+    }
+
+    // Take from https://github.com/ghostty-org/ghostty/blob/5a1edfb25402f06bc11568de3fcbf4bcc4b898be/src/cli/ssh_cache.zig#L344
+    fn formatTimestamp(buf: []u8, timestamp: i64) []const u8 {
+        // Clamp to [epoch, last second of 9999-12-31Z]: `std.time.epoch`
+        // accumulates the year in a `u16` (panics beyond that), and the buffer
+        // only fits a 4-digit year.
+        const secs: u64 = @intCast(std.math.clamp(timestamp, 0, 253402300799));
+
+        const epoch = std.time.epoch;
+        const epoch_secs: epoch.EpochSeconds = .{ .secs = secs };
+        const day = epoch_secs.getEpochDay();
+        const year_day = day.calculateYearDay();
+        const month_day = year_day.calculateMonthDay();
+        const ds = epoch_secs.getDaySeconds();
+        return std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
+            year_day.year,
+            month_day.month.numeric(),
+            month_day.day_index + 1,
+            ds.getHoursIntoDay(),
+            ds.getMinutesIntoHour(),
+            ds.getSecondsIntoMinute(),
+        }) catch unreachable;
     }
 
     pub fn deinit(self: *Page, allocator: mem.Allocator) void {
