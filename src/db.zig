@@ -14,7 +14,7 @@ pub const DB = struct {
     pub fn open(path: [:0]const u8) !DB {
         var db: ?*c.sqlite3 = null;
         errdefer _ = c.sqlite3_close(db);
-        const res = c.sqlite3_open(path, &db);
+        const res = c.sqlite3_open_v2(path, &db, c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_CREATE, null);
         if (res != c.SQLITE_OK) {
             log.err(
                 "{} on open: {s}",
@@ -31,10 +31,17 @@ pub const DB = struct {
         self.db = undefined;
     }
 
+    pub const ExecCallback = *const fn (
+        ctx: ?*anyopaque,
+        num_results: c_int,
+        cols: **c_char,
+        rows: **c_char,
+    ) callconv(.c) c_int;
+
     // https://www.sqlite.org/c3ref/exec.html
-    pub fn exec(self: *DB, query: []const u8) !void {
+    pub fn exec(self: *DB, query: []const u8, cb: ?ExecCallback, ctx: ?*anyopaque) !void {
         var errmsg: [*c]u8 = null;
-        const rc = c.sqlite3_exec(self.handle, query.ptr, null, null, &errmsg);
+        const rc = c.sqlite3_exec(self.handle, query.ptr, cb, ctx, &errmsg);
         if (rc != c.SQLITE_OK) {
             if (errmsg != null) {
                 log.err("sqlite exec failed: {s}", .{errmsg});
