@@ -1,21 +1,21 @@
 const std = @import("std");
-const builtin = @import("builtin");
-const md = @import("./md.zig");
-const render_html = @import("./render_html.zig");
-const graph = @import("./graph.zig");
-const log = @import("./utils.zig").log;
-const parse_html = @import("./parse_html.zig");
-const DB = @import("./db.zig").DB;
-
-const RenderContext = render_html.RenderContext;
-const PageGraph = graph.PageGraph;
-const Page = graph.Page;
-const Parser = md.Parser;
-
 const print = std.debug.print;
 const mem = std.mem;
 const assert = std.debug.assert;
 const testing = std.testing;
+const builtin = @import("builtin");
+
+const DB = @import("./db.zig").DB;
+const graph = @import("./graph.zig");
+const PageGraph = graph.PageGraph;
+const Page = graph.Page;
+const md = @import("./md.zig");
+const Parser = md.Parser;
+const parse_html = @import("./parse_html.zig");
+const render_html = @import("./render_html.zig");
+const RenderContext = render_html.RenderContext;
+const Indexer = @import("./indexer.zig").Indexer;
+const log = @import("./utils.zig").log;
 
 const TOPAZ_VERSION = "0.0.1";
 var debug_enabled: bool = false;
@@ -126,15 +126,10 @@ pub fn main() !void {
         var dirname: [1024]u8 = undefined;
         const cur_dir = try std.fs.cwd().realpath(".", &dirname);
         const db_name = try std.fmt.allocPrintSentinel(allocator, "{s}.db", .{std.fs.path.basename(cur_dir)}, 0);
-        log.debug("Using DB file \"{s}\"\n", .{db_name});
-        var db = try DB.open(db_name);
 
-        // // path             TEXT canonical document name
-        // // content          TEXT text content
-        // // created_at       TEXT ISO-8601
-        // // updated_at       TEXT ISO-8601
-        // try db.exec("CREATE TABLE IF NOT EXISTS documents(path TEXT UNIQUE NOT NULL, content TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)");
-        defer db.close();
+        var indexer = try Indexer.init(db_name);
+
+        defer indexer.deinit();
     }
 
     var input_files = std.ArrayList([]const u8).empty;

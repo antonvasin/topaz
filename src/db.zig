@@ -34,14 +34,14 @@ pub const DB = struct {
     pub const ExecCallback = *const fn (
         ctx: ?*anyopaque,
         num_results: c_int,
-        cols: **c_char,
-        rows: **c_char,
+        cols: [*c][*c]c_char,
+        rows: [*c][*c]c_char,
     ) callconv(.c) c_int;
 
     // https://www.sqlite.org/c3ref/exec.html
     pub fn exec(self: *DB, query: []const u8, cb: ?ExecCallback, ctx: ?*anyopaque) !void {
         var errmsg: [*c]u8 = null;
-        const rc = c.sqlite3_exec(self.handle, query.ptr, cb, ctx, &errmsg);
+        const rc = c.sqlite3_exec(self.db, query.ptr, cb, ctx, &errmsg);
         if (rc != c.SQLITE_OK) {
             if (errmsg != null) {
                 log.err("sqlite exec failed: {s}", .{errmsg});
