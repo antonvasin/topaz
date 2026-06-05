@@ -5,6 +5,7 @@ const render_html = @import("./render_html.zig");
 const graph = @import("./graph.zig");
 const log = @import("./utils.zig").log;
 const parse_html = @import("./parse_html.zig");
+const DB = @import("./db.zig").DB;
 
 const RenderContext = render_html.RenderContext;
 const PageGraph = graph.PageGraph;
@@ -118,6 +119,16 @@ pub fn main() !void {
             try stdout.flush();
             return;
         }
+    }
+
+    // Initialize db
+    {
+        var dirname: [1024]u8 = undefined;
+        const cur_dir = try std.fs.cwd().realpath(".", &dirname);
+        const db_name = try std.fmt.allocPrintSentinel(allocator, "{s}.db", .{std.fs.path.basename(cur_dir)}, 0);
+        log.debug("Using DB file \"{s}\"\n", .{db_name});
+        var db = try DB.open(db_name);
+        defer db.close();
     }
 
     var input_files = std.ArrayList([]const u8).empty;
