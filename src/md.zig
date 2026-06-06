@@ -5,7 +5,7 @@ const c = @cImport({
 });
 const anyascii = @import("anyascii.zig");
 
-const log = @import("./utils.zig").log;
+const log = std.log.scoped(.md);
 const RenderContext = @import("./render_html.zig").RenderContext;
 const Page = @import("./graph.zig").Page;
 

@@ -15,7 +15,7 @@ const parse_html = @import("./parse_html.zig");
 const render_html = @import("./render_html.zig");
 const RenderContext = render_html.RenderContext;
 const Indexer = @import("./indexer.zig").Indexer;
-const log = @import("./utils.zig").log;
+const log = std.log.scoped(.cli);
 
 const TOPAZ_VERSION = "0.0.1";
 var debug_enabled: bool = false;

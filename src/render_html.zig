@@ -10,7 +10,7 @@ const Document = parser.Document;
 const Element = parser.Element;
 const Node = parser.Node;
 const Page = graph.Page;
-const log = @import("./utils.zig").log;
+const log = std.log.scoped(.render_html);
 
 /// Incrementally builds HTML string with correct indentation.
 /// Caller should not care about neither indentation nor newlines.
