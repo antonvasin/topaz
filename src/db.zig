@@ -90,7 +90,7 @@ pub const DB = struct {
         }
 
         // https://www.sqlite.org/c3ref/bind_parameter_index.html
-        pub fn paramIndex(self: *const Statement, name: [:0]const u8) !c_int {
+        pub fn paramIndex(self: *const Statement, name: [:0]const u8) !usize {
             const rv = c.sqlite3_bind_parameter_index(self.stmt, name.ptr);
             if (rv == 0) {
                 log.err("No parameter found: {s}", .{name});
@@ -306,8 +306,8 @@ test "paramIndex" {
     const stmt = try db.prepare("SELECT :foo, :bar");
     defer _ = c.sqlite3_finalize(stmt.stmt);
 
-    try testing.expectEqual(@as(c_int, 1), try stmt.paramIndex(":foo"));
-    try testing.expectEqual(@as(c_int, 2), try stmt.paramIndex(":bar"));
+    try testing.expectEqual(@as(usize, 1), try stmt.paramIndex(":foo"));
+    try testing.expectEqual(@as(usize, 2), try stmt.paramIndex(":bar"));
     // try testing.expectError(error.Bind, stmt.paramIndex(":missing"));
 }
 

@@ -41,7 +41,7 @@ pub const std_options: std.Options = .{
 };
 
 /// Read file from disk, parse metadata and add to graph
-fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: *PageGraph, config: *Config) !void {
+fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: *PageGraph, config: *Config, indexer: *Indexer) !void {
     const full_path = try std.fs.path.join(allocator, &[_][]const u8{ config.input_path, file_path });
     defer allocator.free(full_path);
     const file = std.fs.cwd().openFile(full_path, .{}) catch |err| {
@@ -58,6 +58,8 @@ fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: *Pag
 
     const page = try Page.init(allocator, file_path, buf, stat);
     try page_graph.addPage(page);
+
+    try indexer.ingestDocument(&page);
 }
 
 const Config = struct {
@@ -122,15 +124,13 @@ pub fn main() !void {
     }
 
     // Initialize db
-    {
-        var dirname: [1024]u8 = undefined;
-        const cur_dir = try std.fs.cwd().realpath(".", &dirname);
-        const db_name = try std.fmt.allocPrintSentinel(allocator, "{s}.db", .{std.fs.path.basename(cur_dir)}, 0);
+    var dirname: [1024]u8 = undefined;
+    const cur_dir = try std.fs.cwd().realpath(".", &dirname);
+    const db_name = try std.fmt.allocPrintSentinel(allocator, "{s}.db", .{std.fs.path.basename(cur_dir)}, 0);
 
-        var indexer = try Indexer.init(db_name);
+    var indexer = try Indexer.init(db_name);
 
-        defer indexer.deinit();
-    }
+    defer indexer.deinit();
 
     var input_files = std.ArrayList([]const u8).empty;
 
@@ -175,7 +175,7 @@ pub fn main() !void {
 
     // First pass: read files into memory and parse metadata
     for (input_files.items) |path| {
-        try processFile(allocator, path, &page_graph, &config);
+        try processFile(allocator, path, &page_graph, &config, &indexer);
         const page_name = path[0 .. path.len - 3];
         var ctx = try RenderContext.init(allocator, &page_graph);
         if (config.template_file) |template| {

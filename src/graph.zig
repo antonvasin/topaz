@@ -178,7 +178,7 @@ pub const Page = struct {
         };
     }
 
-    // Take from https://github.com/ghostty-org/ghostty/blob/5a1edfb25402f06bc11568de3fcbf4bcc4b898be/src/cli/ssh_cache.zig#L344
+    // Taken from https://github.com/ghostty-org/ghostty/blob/5a1edfb25402f06bc11568de3fcbf4bcc4b898be/src/cli/ssh_cache.zig#L344
     fn formatTimestamp(buf: []u8, timestamp: i64) []const u8 {
         // Clamp to [epoch, last second of 9999-12-31Z]: `std.time.epoch`
         // accumulates the year in a `u16` (panics beyond that), and the buffer
