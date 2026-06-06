@@ -1,7 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 const Yaml = @import("yaml").Yaml;
-const log = @import("./utils.zig").log;
+const log = std.log.scoped(.graph);
 
 pub const Page = struct {
     name: []const u8,

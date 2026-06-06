@@ -1,5 +1,4 @@
 const std = @import("std");
-const utils = @import("./utils.zig");
 const mem = std.mem;
 
 const c = @cImport({
