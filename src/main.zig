@@ -9,15 +9,15 @@ const DB = @import("./db.zig").DB;
 const graph = @import("./graph.zig");
 const PageGraph = graph.PageGraph;
 const Page = graph.Page;
+const Indexer = @import("./indexer.zig").Indexer;
 const md = @import("./md.zig");
 const Parser = md.Parser;
 const parse_html = @import("./parse_html.zig");
-const render_html = @import("./render_html.zig");
-const RenderContext = render_html.RenderContext;
-const Indexer = @import("./indexer.zig").Indexer;
+const RenderContext = @import("./render_html.zig").RenderContext;
+
 const log = std.log.scoped(.cli);
 
-const TOPAZ_VERSION = "0.0.1";
+const TOPAZ_VERSION = "0.0.2";
 var debug_enabled: bool = false;
 
 pub const std_options: std.Options = .{
@@ -87,38 +87,41 @@ pub fn main() !void {
 
     var config = Config{ .input_path = ".", .output_path = "topaz-out", .is_debug = false };
 
-    const args = try std.process.argsAlloc(allocator);
-    // Parse the command line arguments. Config arguments that take a value
-    // must use '='. The first non-flag argument is treated as input source.
-    // TODO: add support for list of inputs
-    var found_input = false;
-    for (args[1..]) |arg| {
-        if (mem.eql(u8, arg, "--debug")) {
-            config.is_debug = true;
-            debug_enabled = true;
-        } else if (!mem.startsWith(u8, arg, "--")) {
-            if (!found_input) {
-                config.input_path = arg;
-                found_input = true;
+    // Parse args
+    {
+        const args = try std.process.argsAlloc(allocator);
+        // Parse the command line arguments. Config arguments that take a value
+        // must use '='. The first non-flag argument is treated as input source.
+        // TODO: add support for list of inputs
+        var found_input = false;
+        for (args[1..]) |arg| {
+            if (mem.eql(u8, arg, "--debug")) {
+                config.is_debug = true;
+                debug_enabled = true;
+            } else if (!mem.startsWith(u8, arg, "--")) {
+                if (!found_input) {
+                    config.input_path = arg;
+                    found_input = true;
+                }
+            } else if (mem.startsWith(u8, arg, "--out=")) {
+                config.output_path = arg[6..];
+                log.info("Out dir is \"{s}\"\n", .{config.output_path});
+            } else if (mem.startsWith(u8, arg, "--template=")) {
+                config.template = arg[11..];
+                log.info("Using template {s}", .{config.template.?});
+            } else if (mem.startsWith(u8, arg, "--help")) {
+                const help =
+                    \\topaz {s}
+                    \\
+                    \\  --out=<outdir>              Directory to output rendered HTML
+                    \\  --template=<template.html>  HTML Template to use
+                    \\  --help                      Print this help message
+                    \\
+                ;
+                try stdout.print(help, .{TOPAZ_VERSION});
+                try stdout.flush();
+                return;
             }
-        } else if (mem.startsWith(u8, arg, "--out=")) {
-            config.output_path = arg[6..];
-            log.info("Out dir is \"{s}\"\n", .{config.output_path});
-        } else if (mem.startsWith(u8, arg, "--template=")) {
-            config.template = arg[11..];
-            log.info("Using template {s}", .{config.template.?});
-        } else if (mem.startsWith(u8, arg, "--help")) {
-            const help =
-                \\topaz {s}
-                \\
-                \\  --out=<outdir>              Directory to output rendered HTML
-                \\  --template=<template.html>  HTML Template to use
-                \\  --help                      Print this help message
-                \\
-            ;
-            try stdout.print(help, .{TOPAZ_VERSION});
-            try stdout.flush();
-            return;
         }
     }
 
