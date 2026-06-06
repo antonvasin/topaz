@@ -11,11 +11,48 @@ pub const DB = struct {
         db: *c.sqlite3,
         stmt: *c.sqlite3_stmt,
 
+        pub const BindType = enum {
+            blob,
+            blob64,
+            double,
+            int,
+            int64,
+            null,
+            text,
+            text16,
+            text64,
+            value,
+            pointer,
+            zeroblob,
+            zeroblob64,
+        };
+
+        pub const BindValue = union(BindType) {
+            blob: []const u8,
+            blob64: []const u8,
+            double: f64,
+            int: c_int,
+            int64: c.sqlite3_int64,
+            null: void,
+            text: []const u8,
+            /// Raw UTF-16 bytes.
+            text16: []const u8,
+            text64: struct { text: []const u8, encoding: u8 = c.SQLITE_UTF8 },
+            value: *const c.sqlite3_value,
+            pointer: struct {
+                ptr: ?*anyopaque,
+                type_name: [:0]const u8,
+                destructor: c.sqlite3_destructor_type = null,
+            },
+            zeroblob: c_int,
+            zeroblob64: c.sqlite3_uint64,
+        };
+
         /// Bind value to a statement, wraps various sqlite_bind_* functions.
         /// For .blob, .blob64, .text, .text16, and .text64 the caller is
         /// responsible for managing value lifetime.
         /// https://www.sqlite.org/c3ref/bind_blob.html
-        pub fn bind(self: *Statement, index: usize, value: DB.BindValue) !void {
+        pub fn bind(self: *Statement, index: usize, value: BindValue) !void {
             const idx: c_int = @intCast(index);
             const res: c_int = switch (value) {
                 // int sqlite3_bind_blob(sqlite3_stmt*, int, const void*, int n, void(*)(void*));
@@ -77,54 +114,83 @@ pub const DB = struct {
             };
         }
 
+        pub const ColumnType = enum {
+            blob,
+            double,
+            int,
+            int64,
+            text,
+            text16,
+            value,
+        };
+
+        pub const ColumnValue = union(ColumnType) {
+            /// Owned by SQLite; valid until the next step/reset/finalize or a
+            /// type conversion on the same column. Caller must copy to retain.
+            blob: []const u8,
+            double: f64,
+            int: c_int,
+            int64: c.sqlite3_int64,
+            /// See `blob` note on lifetime. UTF-8 bytes, may contain embedded nulls.
+            text: []const u8,
+            /// See `blob` note on lifetime. Raw UTF-16 bytes.
+            text16: []const u8,
+            value: *c.sqlite3_value,
+        };
+
+        /// Read a column from the current row, wraps various
+        /// sqlite3_column_* functions. The column index is 0-based.
+        /// For .blob, .text, and .text16 the returned slice is owned by
+        /// SQLite and only valid until the next step/reset/finalize; the
+        /// caller must copy it to retain the data.
+        /// https://www.sqlite.org/c3ref/column_blob.html
+        pub fn column(self: *const Statement, index: usize, col_type: ColumnType) ColumnValue {
+            const idx: c_int = @intCast(index);
+            return switch (col_type) {
+                // const void *sqlite3_column_blob(sqlite3_stmt*, int iCol);
+                .blob => b: {
+                    // Per SQLite, call the data function before the size function.
+                    const ptr = c.sqlite3_column_blob(self.stmt, idx);
+                    const len: usize = @intCast(c.sqlite3_column_bytes(self.stmt, idx));
+                    const bytes: [*]const u8 = @ptrCast(ptr orelse break :b .{ .blob = &.{} });
+                    break :b .{ .blob = bytes[0..len] };
+                },
+                // double sqlite3_column_double(sqlite3_stmt*, int iCol);
+                .double => .{ .double = c.sqlite3_column_double(self.stmt, idx) },
+                // int sqlite3_column_int(sqlite3_stmt*, int iCol);
+                .int => .{ .int = c.sqlite3_column_int(self.stmt, idx) },
+                // sqlite3_int64 sqlite3_column_int64(sqlite3_stmt*, int iCol);
+                .int64 => .{ .int64 = c.sqlite3_column_int64(self.stmt, idx) },
+                // const unsigned char *sqlite3_column_text(sqlite3_stmt*, int iCol);
+                .text => b: {
+                    const ptr = c.sqlite3_column_text(self.stmt, idx);
+                    const len: usize = @intCast(c.sqlite3_column_bytes(self.stmt, idx));
+                    const bytes: [*]const u8 = @ptrCast(ptr orelse break :b .{ .text = &.{} });
+                    break :b .{ .text = bytes[0..len] };
+                },
+                // const void *sqlite3_column_text16(sqlite3_stmt*, int iCol);
+                .text16 => b: {
+                    const ptr = c.sqlite3_column_text16(self.stmt, idx);
+                    const len: usize = @intCast(c.sqlite3_column_bytes16(self.stmt, idx));
+                    const bytes: [*]const u8 = @ptrCast(ptr orelse break :b .{ .text16 = &.{} });
+                    break :b .{ .text16 = bytes[0..len] };
+                },
+                // sqlite3_value *sqlite3_column_value(sqlite3_stmt*, int iCol);
+                .value => .{ .value = c.sqlite3_column_value(self.stmt, idx).? },
+            };
+        }
+
         // https://www.sqlite.org/c3ref/finalize.html
-        pub fn finalize(self: *const Statement) void {
+        pub fn finalize(self: *const Statement) !void {
             const res = c.sqlite3_finalize(self.stmt);
             if (res != c.SQLITE_OK) {
-                log.err("Error finalizing statement {}: {s}", .{ res, DB.errorMessage(self.db) });
+                log.err("Error finalizing statement {}: {s}", .{ res, DB.errorMessage(self.db) orelse "null" });
                 return error.Finalize;
             }
         }
     };
 
     db: *c.sqlite3,
-
-    pub const BindType = enum {
-        blob,
-        blob64,
-        double,
-        int,
-        int64,
-        null,
-        text,
-        text16,
-        text64,
-        value,
-        pointer,
-        zeroblob,
-        zeroblob64,
-    };
-
-    pub const BindValue = union(BindType) {
-        blob: []const u8,
-        blob64: []const u8,
-        double: f64,
-        int: c_int,
-        int64: c.sqlite3_int64,
-        null: void,
-        text: []const u8,
-        /// Raw UTF-16 bytes.
-        text16: []const u8,
-        text64: struct { text: []const u8, encoding: u8 = c.SQLITE_UTF8 },
-        value: *const c.sqlite3_value,
-        pointer: struct {
-            ptr: ?*anyopaque,
-            type_name: [:0]const u8,
-            destructor: c.sqlite3_destructor_type = null,
-        },
-        zeroblob: c_int,
-        zeroblob64: c.sqlite3_uint64,
-    };
 
     // https://www.sqlite.org/c3ref/open.html
     // https://www.sqlite.org/c3ref/close.html
@@ -246,5 +312,62 @@ test "paramIndex" {
 }
 
 test "step" {
-    // TODO: test step() and finalize()
+    var db = try DB.open(":memory:");
+    defer db.close();
+
+    try db.exec("CREATE TABLE t (n INTEGER)", null, null);
+    try db.exec("INSERT INTO t (n) VALUES (10), (20)", null, null);
+
+    const stmt = try db.prepare("SELECT n FROM t ORDER BY n");
+    defer _ = c.sqlite3_finalize(stmt.stmt);
+
+    // First row.
+    try testing.expectEqual(DB.Statement.StepResult.RowAvailable, try stmt.step());
+    try testing.expectEqual(@as(c_int, 10), c.sqlite3_column_int(stmt.stmt, 0));
+    // Second row.
+    try testing.expectEqual(DB.Statement.StepResult.RowAvailable, try stmt.step());
+    try testing.expectEqual(@as(c_int, 20), c.sqlite3_column_int(stmt.stmt, 0));
+    // No more rows.
+    try testing.expectEqual(DB.Statement.StepResult.Done, try stmt.step());
+}
+
+test "finalize" {
+    var db = try DB.open(":memory:");
+    defer db.close();
+
+    const stmt = try db.prepare("SELECT 1");
+    try testing.expectEqual(DB.Statement.StepResult.RowAvailable, try stmt.step());
+    try stmt.finalize();
+}
+
+test "column" {
+    var db = try DB.open(":memory:");
+    defer db.close();
+
+    const utf16 = std.unicode.utf8ToUtf16LeStringLiteral("wide");
+
+    var stmt = try db.prepare(
+        "SELECT ?1, ?2, ?3, ?4, ?5, ?6",
+    );
+    defer _ = c.sqlite3_finalize(stmt.stmt);
+
+    try stmt.bind(1, .{ .blob = "blob" });
+    try stmt.bind(2, .{ .double = 3.14 });
+    try stmt.bind(3, .{ .int = 42 });
+    try stmt.bind(4, .{ .int64 = 9_000_000_000 });
+    try stmt.bind(5, .{ .text = "hello" });
+    try stmt.bind(6, .{ .text16 = std.mem.sliceAsBytes(utf16) });
+
+    try testing.expectEqual(DB.Statement.StepResult.RowAvailable, try stmt.step());
+
+    try testing.expectEqualStrings("blob", stmt.column(0, .blob).blob);
+    try testing.expectEqual(@as(f64, 3.14), stmt.column(1, .double).double);
+    try testing.expectEqual(@as(c_int, 42), stmt.column(2, .int).int);
+    try testing.expectEqual(@as(i64, 9_000_000_000), stmt.column(3, .int64).int64);
+    try testing.expectEqualStrings("hello", stmt.column(4, .text).text);
+    try testing.expectEqualSlices(u8, std.mem.sliceAsBytes(utf16), stmt.column(5, .text16).text16);
+
+    // .value returns a live sqlite3_value*, usable with the raw API.
+    const v = stmt.column(2, .value).value;
+    try testing.expectEqual(@as(c_int, 42), c.sqlite3_value_int(v));
 }
