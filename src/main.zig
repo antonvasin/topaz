@@ -1,5 +1,4 @@
 const std = @import("std");
-const print = std.debug.print;
 const mem = std.mem;
 const assert = std.debug.assert;
 const testing = std.testing;
@@ -44,24 +43,21 @@ pub const std_options: std.Options = .{
 /// Read file from disk, parse metadata and add to graph
 fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: *PageGraph, config: *Config) !void {
     const full_path = try std.fs.path.join(allocator, &[_][]const u8{ config.input_path, file_path });
+    defer allocator.free(full_path);
     const file = std.fs.cwd().openFile(full_path, .{}) catch |err| {
         log.err("Failed to read {s}, skipping\n", .{full_path});
         return err;
     };
-    defer allocator.free(full_path);
+    defer file.close();
 
-    // const filesize = try file.getEndPos();
     const stat = try file.stat();
-    print("Processing {s} ({d}b)\n", .{ file_path, stat.size });
+    log.info("Processing {s} ({d}b)\n", .{ file_path, stat.size });
     const buf = try allocator.alloc(u8, stat.size);
     errdefer allocator.free(buf);
-    _ = try file.readAll(buf);
+    _ = try std.fs.cwd().readFile(full_path, buf);
 
     const page = try Page.init(allocator, file_path, buf, stat);
-
     try page_graph.addPage(page);
-
-    defer file.close();
 }
 
 const Config = struct {
@@ -174,9 +170,7 @@ pub fn main() !void {
     var contexts = std.ArrayList(RenderContext).empty;
 
     if (config.template) |template| {
-        const tmpl_stat = try std.fs.cwd().statFile(template);
-        const data = try std.fs.Dir.readFileAlloc(std.fs.cwd(), allocator, template, tmpl_stat.size);
-        config.template_file = data;
+        config.template_file = try std.fs.cwd().readFileAlloc(allocator, template, std.math.maxInt(usize));
     }
 
     // First pass: read files into memory and parse metadata
