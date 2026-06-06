@@ -159,7 +159,7 @@ pub const RenderContext = struct {
         try self.writeOpen("<section>");
         try self.writeString("<h3>Table of contents");
         try self.writeOpen("<ol>");
-        const headers_list = self.graph.headers_lists.get(self.cur_page) orelse return error.MissingHeaders;
+        const headers_list = self.graph.header_lists.get(self.cur_page) orelse return error.MissingHeaders;
         for (headers_list.items) |header_id| {
             const header = self.graph.headers.get(header_id) orelse return error.MissingHeaders;
             try self.writeOpen("<li>");

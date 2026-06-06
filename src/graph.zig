@@ -3,7 +3,10 @@ const mem = std.mem;
 const Yaml = @import("yaml").Yaml;
 const log = std.log.scoped(.graph);
 
+/// Page contents with meta information.
+/// Responsible for all page-related memory.
 pub const Page = struct {
+    arena: std.heap.ArenaAllocator,
     name: []const u8,
     path: []const u8,
     out_path: []const u8,
@@ -59,13 +62,16 @@ pub const Page = struct {
     };
 
     pub fn init(allocator: mem.Allocator, file_path: []const u8, buf: []const u8, stat: std.fs.File.Stat) !Page {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        const page_allocator = arena.allocator();
+
         // input_folder  /note-01           .md
         // input_folder  /subfolder/note-02 .md
         //
         // [input_dir]   /      [name]      .md
         // [outdir]      /      [name]      .html
         const name = file_path[0 .. file_path.len - 3];
-        const out_path = try std.fmt.allocPrint(allocator, "{s}.html", .{name});
+        const out_path = try std.fmt.allocPrint(page_allocator, "{s}.html", .{name});
 
         var yaml_end: usize = 0;
 
@@ -85,11 +91,11 @@ pub const Page = struct {
 
         const frontmatter = if (yaml_end > 0) buf[0..yaml_end] else null;
 
-        const created_at = try allocator.alloc(u8, 32);
-        const updated_at = try allocator.alloc(u8, 32);
+        const created_at = try page_allocator.alloc(u8, 32);
+        const updated_at = try page_allocator.alloc(u8, 32);
 
         var meta = Page.Meta{
-            .title = try allocator.dupe(u8, name),
+            .title = try page_allocator.dupe(u8, name),
             .skip = false,
             .url = name,
             .size = stat.size,
@@ -149,12 +155,12 @@ pub const Page = struct {
             var yaml_parser: Yaml = .{ .source = yml };
             // Pages are not following any fixed schema so we won't try to parse them
             // into a struct. Instead we attempt to parse fields important to us one by one.
-            try yaml_parser.load(allocator);
-            defer yaml_parser.deinit(allocator);
+            try yaml_parser.load(page_allocator);
+            defer yaml_parser.deinit(page_allocator);
             const map = yaml_parser.docs.items[0].map;
             if (map.contains("title")) {
-                allocator.free(meta.title);
-                meta.title = try allocator.dupe(u8, map.get("title").?.scalar);
+                page_allocator.free(meta.title);
+                meta.title = try page_allocator.dupe(u8, map.get("title").?.scalar);
             }
             if (map.contains("draft")) meta.skip = mem.eql(u8, map.get("draft").?.scalar, "true");
             if (map.contains("publish")) meta.skip = !mem.eql(u8, map.get("publish").?.scalar, "true");
@@ -168,6 +174,7 @@ pub const Page = struct {
             .markdown = buf[yaml_end .. buf.len - 1],
             .frontmatter = frontmatter,
             .meta = meta,
+            .arena = arena,
         };
     }
 
@@ -194,16 +201,19 @@ pub const Page = struct {
         }) catch unreachable;
     }
 
-    pub fn deinit(self: *Page, allocator: mem.Allocator) void {
-        allocator.free(self.out_path);
-        allocator.free(self.meta.title);
+    pub fn deinit(self: *Page) void {
+        self.arena.deinit();
     }
 };
+
+const LinkValues = std.StringHashMap(Page.Link);
+const Links = std.StringHashMap(LinkValues);
 
 ///  Stores relationships between Pages
 pub const PageGraph = struct {
     allocator: mem.Allocator,
     page_list: std.ArrayList(Page),
+    /// page_name -> page_list[i]
     pages: std.StringHashMap(usize),
     ///  What links page have
     forward: Links,
@@ -211,7 +221,7 @@ pub const PageGraph = struct {
     backward: Links,
 
     // We store list headers inside hash map which maps page to a list of header ids
-    headers_lists: std.StringHashMap(std.ArrayList([]const u8)),
+    header_lists: std.StringHashMap(std.ArrayList([]const u8)),
     // Page headers by id
     headers: std.StringHashMap(Page.Header),
 
@@ -229,7 +239,7 @@ pub const PageGraph = struct {
             .pages = pages,
             .forward = forward,
             .backward = backward,
-            .headers_lists = headers_lists,
+            .header_lists = headers_lists,
             .headers = headers,
         };
     }
@@ -239,7 +249,7 @@ pub const PageGraph = struct {
         self.pages.deinit();
         self.forward.deinit();
         self.backward.deinit();
-        self.headers_lists.deinit();
+        self.header_lists.deinit();
         self.headers.deinit();
     }
 
@@ -274,6 +284,7 @@ pub const PageGraph = struct {
         try backward_links_ptr.value_ptr.put(id, backward_link);
     }
 
+    /// For debug
     pub fn listPages(self: *PageGraph) void {
         var iterator = self.pages.keyIterator();
 
@@ -289,16 +300,13 @@ pub const PageGraph = struct {
 
         try self.headers.put(header.id, header);
 
-        const headers_list = try self.headers_lists.getOrPut(page_name);
+        const headers_list = try self.header_lists.getOrPut(page_name);
         if (!headers_list.found_existing) {
             headers_list.value_ptr.* = std.ArrayList([]const u8).empty;
         }
         try headers_list.value_ptr.append(self.allocator, header.id);
     }
 };
-
-const LinkValues = std.StringHashMap(Page.Link);
-const Links = std.StringHashMap(LinkValues);
 
 test "Page" {
     const testing = std.testing;
@@ -314,8 +322,16 @@ test "Page" {
             \\
             \\Paragraph text
         ;
-        var page = try Page.init(allocator, "note.md", buf);
-        defer page.deinit(allocator);
+        var page = try Page.init(allocator, "note.md", buf, .{
+            .ctime = 1,
+            .mtime = 2,
+            .atime = 3,
+            .size = 4,
+            .kind = .file,
+            .inode = 5,
+            .mode = 0,
+        });
+        defer page.deinit();
         try testing.expect(mem.eql(u8, page.name, "note"));
         try testing.expect(mem.eql(u8, page.meta.title, "Note Title"));
         try testing.expectEqual(page.meta.skip, false);
@@ -332,8 +348,16 @@ test "Page" {
             \\Paragraph text
         ;
 
-        var page = try Page.init(allocator, "note.md", buf);
-        defer page.deinit(allocator);
+        var page = try Page.init(allocator, "note.md", buf, .{
+            .ctime = 1,
+            .mtime = 2,
+            .atime = 3,
+            .size = 4,
+            .kind = .file,
+            .inode = 5,
+            .mode = 0,
+        });
+        defer page.deinit();
         try testing.expectEqual(page.meta.skip, true);
     }
 }
