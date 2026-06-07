@@ -8,7 +8,7 @@ const DB = @import("./db.zig").DB;
 const graph = @import("./graph.zig");
 const PageGraph = graph.PageGraph;
 const Page = graph.Page;
-const Indexer = @import("./indexer.zig").Indexer;
+const indexer = @import("./indexer.zig");
 const md = @import("./md.zig");
 const Parser = md.Parser;
 const parse_html = @import("./parse_html.zig");
@@ -39,28 +39,6 @@ pub const std_options: std.Options = .{
         .{ .scope = .tokenizer, .level = .err },
     },
 };
-
-/// Read file from disk, parse metadata and add to graph
-fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: *PageGraph, input_path: []const u8, indexer: *Indexer) !void {
-    const full_path = try std.fs.path.join(allocator, &[_][]const u8{ input_path, file_path });
-    defer allocator.free(full_path);
-    const file = std.fs.cwd().openFile(full_path, .{}) catch |err| {
-        log.err("Failed to read {s}, skipping\n", .{full_path});
-        return err;
-    };
-    defer file.close();
-
-    const stat = try file.stat();
-    log.info("Processing {s} ({d}b)\n", .{ file_path, stat.size });
-    const buf = try allocator.alloc(u8, stat.size);
-    errdefer allocator.free(buf);
-    _ = try std.fs.cwd().readFile(full_path, buf);
-
-    const page = try Page.init(allocator, file_path, buf, stat);
-    try page_graph.addPage(page);
-
-    try indexer.ingestDocument(&page);
-}
 
 const RenderArgs = struct {
     /// Input source, defaults to current directory.
@@ -179,38 +157,29 @@ fn parseArgs(allocator: mem.Allocator, args: []const [:0]u8, stdout: *std.Io.Wri
     return cli;
 }
 
-pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    const allocator = arena.allocator();
-    defer arena.deinit();
+/// Read file from disk, parse metadata and add to graph
+fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: *PageGraph, input_path: []const u8, db: *DB) !void {
+    const full_path = try std.fs.path.join(allocator, &[_][]const u8{ input_path, file_path });
+    defer allocator.free(full_path);
+    const file = std.fs.cwd().openFile(full_path, .{}) catch |err| {
+        log.err("Failed to read {s}, skipping\n", .{full_path});
+        return err;
+    };
+    defer file.close();
 
-    var stdout_buf: [128]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
-    const stdout = &stdout_writer.interface;
+    const stat = try file.stat();
+    log.info("Processing {s} ({d}b)\n", .{ file_path, stat.size });
+    const buf = try allocator.alloc(u8, stat.size);
+    errdefer allocator.free(buf);
+    _ = try std.fs.cwd().readFile(full_path, buf);
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const page = try Page.init(allocator, file_path, buf, stat);
+    try page_graph.addPage(page);
 
-    const cli = (try parseArgs(allocator, args, stdout)) orelse return;
-
-    // Initialize db
-    var dirname: [1024]u8 = undefined;
-    const cur_dir = try std.fs.cwd().realpath(".", &dirname);
-    const db_name = try std.fmt.allocPrintSentinel(allocator, "{s}.db", .{std.fs.path.basename(cur_dir)}, 0);
-
-    var indexer = try Indexer.init(db_name);
-    defer indexer.deinit();
-
-    switch (cli.command) {
-        .query => |q| try runQuery(&indexer, q),
-        .render => |r| try runRender(allocator, &indexer, r),
-    }
+    try indexer.ingestDocument(db, &page);
 }
-
-fn runQuery(indexer: *Indexer, q: QueryArgs) !void {
-    // SELECT m.path from documents as m JOIN documents_fts AS f ON m.id = f.rowid WHERE f.documents_fts MATCH "dolores"
-    var stmt = try indexer.db.prepare("SELECT m.path from documents as m JOIN documents_fts AS f ON m.id = f.rowid WHERE f.documents_fts MATCH :query");
-    try stmt.bind(1, .{ .text = q.query });
+fn runQuery(db: *DB, q: QueryArgs) !void {
+    var stmt = try indexer.query(db, q.query);
 
     std.debug.print("Query results:\n", .{});
     var count: u64 = 1;
@@ -222,7 +191,7 @@ fn runQuery(indexer: *Indexer, q: QueryArgs) !void {
     try stmt.finalize();
 }
 
-fn runRender(allocator: mem.Allocator, indexer: *Indexer, r: RenderArgs) !void {
+fn runRender(allocator: mem.Allocator, db: *DB, r: RenderArgs) !void {
     var input_files = std.ArrayList([]const u8).empty;
 
     const stat = try std.fs.cwd().statFile(r.input_path);
@@ -267,7 +236,7 @@ fn runRender(allocator: mem.Allocator, indexer: *Indexer, r: RenderArgs) !void {
 
     // First pass: read files into memory and parse metadata
     for (input_files.items) |path| {
-        try processFile(allocator, path, &page_graph, r.input_path, indexer);
+        try processFile(allocator, path, &page_graph, r.input_path, db);
         const page_name = path[0 .. path.len - 3];
         var ctx = try RenderContext.init(allocator, &page_graph);
         if (template_file) |template| {
@@ -307,6 +276,34 @@ fn runRender(allocator: mem.Allocator, indexer: *Indexer, r: RenderArgs) !void {
         const writer = &file_writer.interface;
         try writer.writeAll(try ctx.serialize());
         try writer.flush();
+    }
+}
+
+pub fn main() !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const allocator = arena.allocator();
+    defer arena.deinit();
+
+    var stdout_buf: [128]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
+    const stdout = &stdout_writer.interface;
+
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    const cli = (try parseArgs(allocator, args, stdout)) orelse return;
+
+    // Initialize db
+    var dirname: [1024]u8 = undefined;
+    const cur_dir = try std.fs.cwd().realpath(".", &dirname);
+    const db_name = try std.fmt.allocPrintSentinel(allocator, "{s}.db", .{std.fs.path.basename(cur_dir)}, 0);
+
+    var db = try indexer.init(db_name);
+    defer db.close();
+
+    switch (cli.command) {
+        .query => |q| try runQuery(&db, q),
+        .render => |r| try runRender(allocator, &db, r),
     }
 }
 
