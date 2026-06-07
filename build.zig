@@ -141,4 +141,11 @@ pub fn build(b: *std.Build) !void {
     // running the unit tests.
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
+
+    const exe_check = b.addExecutable(.{
+        .name = "topaz",
+        .root_module = root_module,
+    });
+    const check = b.step("check", "Check compilation without installation");
+    check.dependOn(&exe_check.step);
 }
