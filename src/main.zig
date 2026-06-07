@@ -85,6 +85,8 @@ pub fn main() !void {
 
     var config = Config{ .input_path = ".", .output_path = "topaz-out", .is_debug = false };
 
+    var query: ?[]const u8 = null;
+
     // Parse args
     {
         const args = try std.process.argsAlloc(allocator);
@@ -107,6 +109,9 @@ pub fn main() !void {
             } else if (mem.startsWith(u8, arg, "--template=")) {
                 config.template = arg[11..];
                 log.info("Using template {s}", .{config.template.?});
+            } else if (mem.startsWith(u8, arg, "--query=")) {
+                query = arg[8..];
+                log.info("Processing query {s}", .{query.?});
             } else if (mem.startsWith(u8, arg, "--help")) {
                 const help =
                     \\topaz {s}
@@ -114,6 +119,7 @@ pub fn main() !void {
                     \\  --out=<outdir>              Directory to output rendered HTML
                     \\  --template=<template.html>  HTML Template to use
                     \\  --help                      Print this help message
+                    \\  --query=<query>             Full-text search query
                     \\
                 ;
                 try stdout.print(help, .{TOPAZ_VERSION});
@@ -185,6 +191,21 @@ pub fn main() !void {
         }
         ctx.cur_page = page_name;
         try contexts.append(allocator, ctx);
+    }
+
+    // TODO:  implemenet query subcomand
+    if (query) |q| {
+        // SELECT m.path from documents as m JOIN documents_fts AS f ON m.id = f.rowid WHERE f.documents_fts MATCH "dolores"
+        var stmt = try indexer.db.prepare("SELECT m.path from documents as m JOIN documents_fts AS f ON m.id = f.rowid WHERE f.documents_fts MATCH :query");
+        try stmt.bind(1, .{ .text = q });
+
+        while (try stmt.step() == .RowAvailable) {
+            const path = stmt.column(0, .text).text;
+            std.debug.print("Query result: {s}\n", .{path});
+        }
+
+        try stmt.finalize();
+        return;
     }
 
     // Second pass: parse markdown and index blocks/links
