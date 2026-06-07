@@ -41,8 +41,8 @@ pub const std_options: std.Options = .{
 };
 
 /// Read file from disk, parse metadata and add to graph
-fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: *PageGraph, config: *Config, indexer: *Indexer) !void {
-    const full_path = try std.fs.path.join(allocator, &[_][]const u8{ config.input_path, file_path });
+fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: *PageGraph, input_path: []const u8, indexer: *Indexer) !void {
+    const full_path = try std.fs.path.join(allocator, &[_][]const u8{ input_path, file_path });
     defer allocator.free(full_path);
     const file = std.fs.cwd().openFile(full_path, .{}) catch |err| {
         log.err("Failed to read {s}, skipping\n", .{full_path});
@@ -62,17 +62,122 @@ fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: *Pag
     try indexer.ingestDocument(&page);
 }
 
-const Config = struct {
-    /// Defaults to current directory
-    input_path: []const u8,
-    /// Defaults to 'topaz-out'
-    output_path: []const u8,
-    /// Debug output
-    is_debug: bool = false,
-    /// Defaults to 'template.html'
+const RenderArgs = struct {
+    /// Input source, defaults to current directory.
+    input_path: []const u8 = ".",
+    /// Output directory, defaults to 'topaz-out'.
+    output_path: []const u8 = "topaz-out",
+    /// HTML template path to use, if any.
     template: ?[]const u8 = null,
-    template_file: ?[]const u8 = null,
 };
+
+const QueryArgs = struct {
+    query: []const u8 = "",
+};
+
+const Command = union(enum) {
+    render: RenderArgs,
+    query: QueryArgs,
+};
+
+const Cli = struct {
+    /// Global --debug flag, accepted anywhere on the command line.
+    debug: bool = false,
+    command: Command,
+};
+
+const usage =
+    \\topaz {s}
+    \\
+    \\Usage: topaz [--debug] <command> [args]
+    \\
+    \\Commands:
+    \\  render [input]              Render markdown to HTML
+    \\    --out=<outdir>            Directory to output rendered HTML (default: topaz-out)
+    \\    --template=<template>     HTML template to use
+    \\
+    \\  query [query]               Full-text search the index
+    \\
+    \\Global:
+    \\  --debug                     Enable debug logging
+    \\  --help                      Print this help message
+    \\
+;
+
+/// Parse argv into a `Cli`. Returns null when there is nothing to run
+/// (after printing help for --help, a missing/unknown command, or a bad flag).
+///
+/// TODO: drive this from comptime type and remove hard-coded arguments
+fn parseArgs(allocator: mem.Allocator, args: []const [:0]u8, stdout: *std.Io.Writer) !?Cli {
+    var cli = Cli{ .command = undefined };
+    var have_command = false;
+
+    for (args[1..]) |arg| {
+        if (mem.eql(u8, arg, "--debug")) {
+            cli.debug = true;
+            debug_enabled = true;
+            continue;
+        }
+        if (mem.eql(u8, arg, "--help")) {
+            try stdout.print(usage, .{TOPAZ_VERSION});
+            try stdout.flush();
+            return null;
+        }
+
+        if (!have_command) {
+            if (mem.eql(u8, arg, "render")) {
+                cli.command = .{ .render = .{} };
+            } else if (mem.eql(u8, arg, "query")) {
+                cli.command = .{ .query = .{} };
+            } else {
+                log.err("Unknown command \"{s}\"\n", .{arg});
+                try stdout.print(usage, .{TOPAZ_VERSION});
+                try stdout.flush();
+                return null;
+            }
+            have_command = true;
+            continue;
+        }
+
+        switch (cli.command) {
+            .render => |*r| {
+                if (mem.startsWith(u8, arg, "--out=")) {
+                    r.output_path = try allocator.dupe(u8, arg[6..]);
+                    log.info("Out dir is \"{s}\"\n", .{r.output_path});
+                } else if (mem.startsWith(u8, arg, "--template=")) {
+                    r.template = try allocator.dupe(u8, arg[11..]);
+                    log.info("Using template {s}", .{r.template.?});
+                } else if (!mem.startsWith(u8, arg, "--")) {
+                    r.input_path = try allocator.dupe(u8, arg);
+                } else {
+                    log.err("Unknown flag for render: \"{s}\"\n", .{arg});
+                    try stdout.print(usage, .{TOPAZ_VERSION});
+                    try stdout.flush();
+                    return null;
+                }
+            },
+            .query => |*q| {
+                if (!mem.startsWith(u8, arg, "--")) {
+                    q.query = try allocator.dupe(u8, arg);
+                    log.info("Processing query {s}", .{q.query});
+                } else {
+                    log.err("Unknown flag for query: \"{s}\"\n", .{arg});
+                    try stdout.print(usage, .{TOPAZ_VERSION});
+                    try stdout.flush();
+                    return null;
+                }
+            },
+        }
+    }
+
+    if (!have_command) {
+        try stdout.print(usage, .{TOPAZ_VERSION});
+        try stdout.flush();
+        return null;
+    }
+
+    return cli;
+}
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -83,51 +188,10 @@ pub fn main() !void {
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
     const stdout = &stdout_writer.interface;
 
-    var config = Config{ .input_path = ".", .output_path = "topaz-out", .is_debug = false };
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
 
-    var query: ?[]const u8 = null;
-
-    // Parse args
-    {
-        const args = try std.process.argsAlloc(allocator);
-        // Parse the command line arguments. Config arguments that take a value
-        // must use '='. The first non-flag argument is treated as input source.
-        // TODO: add support for list of inputs
-        var found_input = false;
-        for (args[1..]) |arg| {
-            if (mem.eql(u8, arg, "--debug")) {
-                config.is_debug = true;
-                debug_enabled = true;
-            } else if (!mem.startsWith(u8, arg, "--")) {
-                if (!found_input) {
-                    config.input_path = arg;
-                    found_input = true;
-                }
-            } else if (mem.startsWith(u8, arg, "--out=")) {
-                config.output_path = arg[6..];
-                log.info("Out dir is \"{s}\"\n", .{config.output_path});
-            } else if (mem.startsWith(u8, arg, "--template=")) {
-                config.template = arg[11..];
-                log.info("Using template {s}", .{config.template.?});
-            } else if (mem.startsWith(u8, arg, "--query=")) {
-                query = arg[8..];
-                log.info("Processing query {s}", .{query.?});
-            } else if (mem.startsWith(u8, arg, "--help")) {
-                const help =
-                    \\topaz {s}
-                    \\
-                    \\  --out=<outdir>              Directory to output rendered HTML
-                    \\  --template=<template.html>  HTML Template to use
-                    \\  --help                      Print this help message
-                    \\  --query=<query>             Full-text search query
-                    \\
-                ;
-                try stdout.print(help, .{TOPAZ_VERSION});
-                try stdout.flush();
-                return;
-            }
-        }
-    }
+    const cli = (try parseArgs(allocator, args, stdout)) orelse return;
 
     // Initialize db
     var dirname: [1024]u8 = undefined;
@@ -135,16 +199,37 @@ pub fn main() !void {
     const db_name = try std.fmt.allocPrintSentinel(allocator, "{s}.db", .{std.fs.path.basename(cur_dir)}, 0);
 
     var indexer = try Indexer.init(db_name);
-
     defer indexer.deinit();
 
+    switch (cli.command) {
+        .query => |q| try runQuery(&indexer, q),
+        .render => |r| try runRender(allocator, &indexer, r),
+    }
+}
+
+fn runQuery(indexer: *Indexer, q: QueryArgs) !void {
+    // SELECT m.path from documents as m JOIN documents_fts AS f ON m.id = f.rowid WHERE f.documents_fts MATCH "dolores"
+    var stmt = try indexer.db.prepare("SELECT m.path from documents as m JOIN documents_fts AS f ON m.id = f.rowid WHERE f.documents_fts MATCH :query");
+    try stmt.bind(1, .{ .text = q.query });
+
+    std.debug.print("Query results:\n", .{});
+    var count: u64 = 1;
+    while (try stmt.step() == .RowAvailable) : (count += 1) {
+        const path = stmt.column(0, .text).text;
+        std.debug.print("  {d}: {s}\n", .{ count, path });
+    }
+
+    try stmt.finalize();
+}
+
+fn runRender(allocator: mem.Allocator, indexer: *Indexer, r: RenderArgs) !void {
     var input_files = std.ArrayList([]const u8).empty;
 
-    const stat = try std.fs.cwd().statFile(config.input_path);
+    const stat = try std.fs.cwd().statFile(r.input_path);
 
     // Collect all .md files from dirs
     if (stat.kind == .directory) {
-        var dir = try std.fs.cwd().openDir(config.input_path, .{ .iterate = true });
+        var dir = try std.fs.cwd().openDir(r.input_path, .{ .iterate = true });
         defer dir.close();
         var walker = try dir.walk(allocator);
 
@@ -157,15 +242,15 @@ pub fn main() !void {
                 try input_files.append(allocator, path);
             }
         }
-    } else if (stat.kind == .file and mem.eql(u8, std.fs.path.extension(config.input_path), ".md")) {
+    } else if (stat.kind == .file and mem.eql(u8, std.fs.path.extension(r.input_path), ".md")) {
         // Collect individual input files
-        try input_files.append(allocator, config.input_path);
+        try input_files.append(allocator, r.input_path);
     }
 
     var parser = try Parser.init();
 
     // Create output directory
-    const dest_dir = std.fs.path.resolve(allocator, &[_][]const u8{config.output_path}) catch |err| {
+    const dest_dir = std.fs.path.resolve(allocator, &[_][]const u8{r.output_path}) catch |err| {
         std.log.err("Failed to resolve dest path: {any}\n", .{err});
         return err;
     };
@@ -175,37 +260,23 @@ pub fn main() !void {
     var page_graph = try PageGraph.init(allocator);
     var contexts = std.ArrayList(RenderContext).empty;
 
-    if (config.template) |template| {
-        config.template_file = try std.fs.cwd().readFileAlloc(allocator, template, std.math.maxInt(usize));
-    }
+    const template_file: ?[]const u8 = if (r.template) |template|
+        try std.fs.cwd().readFileAlloc(allocator, template, std.math.maxInt(usize))
+    else
+        null;
 
     // First pass: read files into memory and parse metadata
     for (input_files.items) |path| {
-        try processFile(allocator, path, &page_graph, &config, &indexer);
+        try processFile(allocator, path, &page_graph, r.input_path, indexer);
         const page_name = path[0 .. path.len - 3];
         var ctx = try RenderContext.init(allocator, &page_graph);
-        if (config.template_file) |template| {
+        if (template_file) |template| {
             try ctx.setTemplate(template);
         } else {
             try ctx.setTemplate("");
         }
         ctx.cur_page = page_name;
         try contexts.append(allocator, ctx);
-    }
-
-    // TODO:  implemenet query subcomand
-    if (query) |q| {
-        // SELECT m.path from documents as m JOIN documents_fts AS f ON m.id = f.rowid WHERE f.documents_fts MATCH "dolores"
-        var stmt = try indexer.db.prepare("SELECT m.path from documents as m JOIN documents_fts AS f ON m.id = f.rowid WHERE f.documents_fts MATCH :query");
-        try stmt.bind(1, .{ .text = q });
-
-        while (try stmt.step() == .RowAvailable) {
-            const path = stmt.column(0, .text).text;
-            std.debug.print("Query result: {s}\n", .{path});
-        }
-
-        try stmt.finalize();
-        return;
     }
 
     // Second pass: parse markdown and index blocks/links
@@ -223,11 +294,11 @@ pub fn main() !void {
         try ctx.writeContents(page.meta.title);
 
         const dir_path = if (std.fs.path.dirname(page.out_path)) |dir|
-            try std.fs.path.join(allocator, &[_][]const u8{ config.output_path, dir })
+            try std.fs.path.join(allocator, &[_][]const u8{ r.output_path, dir })
         else
-            config.output_path;
+            r.output_path;
 
-        const out_path = try std.fs.path.join(allocator, &[_][]const u8{ config.output_path, page.out_path });
+        const out_path = try std.fs.path.join(allocator, &[_][]const u8{ r.output_path, page.out_path });
         try std.fs.cwd().makePath(dir_path);
         const dest_file = try std.fs.cwd().createFile(out_path, .{});
         defer dest_file.close();
