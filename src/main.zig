@@ -173,11 +173,19 @@ fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: *Pag
     errdefer allocator.free(buf);
     _ = try std.fs.cwd().readFile(full_path, buf);
 
+    const is_modified = try indexer.checkModified(db, file_path, stat, buf);
+
+    // XXX: debug
+    if (is_modified) {
+        std.debug.print("{s} modified since last run\n", .{ file_path, is_modified });
+    }
+
     const page = try Page.init(allocator, file_path, buf, stat);
     try page_graph.addPage(page);
 
-    try indexer.ingestDocument(db, &page);
+    try indexer.ingestDocument(db, &page, buf);
 }
+
 fn runQuery(db: *DB, q: QueryArgs) !void {
     var stmt = try indexer.query(db, q.query);
 

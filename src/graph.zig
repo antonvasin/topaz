@@ -178,29 +178,6 @@ pub const Page = struct {
         };
     }
 
-    // Taken from https://github.com/ghostty-org/ghostty/blob/5a1edfb25402f06bc11568de3fcbf4bcc4b898be/src/cli/ssh_cache.zig#L344
-    fn formatTimestamp(buf: []u8, timestamp: i64) []const u8 {
-        // Clamp to [epoch, last second of 9999-12-31Z]: `std.time.epoch`
-        // accumulates the year in a `u16` (panics beyond that), and the buffer
-        // only fits a 4-digit year.
-        const secs: u64 = @intCast(std.math.clamp(timestamp, 0, 253402300799));
-
-        const epoch = std.time.epoch;
-        const epoch_secs: epoch.EpochSeconds = .{ .secs = secs };
-        const day = epoch_secs.getEpochDay();
-        const year_day = day.calculateYearDay();
-        const month_day = year_day.calculateMonthDay();
-        const ds = epoch_secs.getDaySeconds();
-        return std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
-            year_day.year,
-            month_day.month.numeric(),
-            month_day.day_index + 1,
-            ds.getHoursIntoDay(),
-            ds.getMinutesIntoHour(),
-            ds.getSecondsIntoMinute(),
-        }) catch unreachable;
-    }
-
     pub fn deinit(self: *Page) void {
         self.arena.deinit();
     }
@@ -360,4 +337,30 @@ test "Page" {
         defer page.deinit();
         try testing.expectEqual(page.meta.skip, true);
     }
+}
+
+/// Format a Unix timestamp as an ISO-8601 UTC string
+/// (`YYYY-MM-DDTHH:MM:SSZ`) into `buf`, which must be at least 20 bytes.
+/// Out-of-range input is clamped so this can't crash on a garbage cache line.
+/// Taken from https://github.com/ghostty-org/ghostty/blob/5a1edfb25402f06bc11568de3fcbf4bcc4b898be/src/cli/ssh_cache.zig#L344
+fn formatTimestamp(buf: []u8, timestamp: i64) []const u8 {
+    // Clamp to [epoch, last second of 9999-12-31Z]: `std.time.epoch`
+    // accumulates the year in a `u16` (panics beyond that), and the buffer
+    // only fits a 4-digit year.
+    const secs: u64 = @intCast(std.math.clamp(timestamp, 0, 253402300799));
+
+    const epoch = std.time.epoch;
+    const epoch_secs: epoch.EpochSeconds = .{ .secs = secs };
+    const day = epoch_secs.getEpochDay();
+    const year_day = day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const ds = epoch_secs.getDaySeconds();
+    return std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
+        year_day.year,
+        month_day.month.numeric(),
+        month_day.day_index + 1,
+        ds.getHoursIntoDay(),
+        ds.getMinutesIntoHour(),
+        ds.getSecondsIntoMinute(),
+    }) catch unreachable;
 }
