@@ -57,9 +57,16 @@ const QueryArgs = struct {
     db: ?[:0]const u8 = null,
 };
 
+const IndexArgs = struct {
+    input: []const u8 = ".",
+    /// SQLite DB file to use
+    db: ?[:0]const u8 = null,
+};
+
 const Command = union(enum) {
     render: RenderArgs,
     query: QueryArgs,
+    index: IndexArgs,
 };
 
 const Cli = struct {
@@ -77,6 +84,9 @@ const usage =
     \\  render [input]                Render markdown to HTML
     \\    --out=<outdir>              Directory to output rendered HTML (default: topaz-out)
     \\    --template=<template.html>  HTML template to use
+    \\    --db=<myindex.db>           SQLite DB file to use
+    \\
+    \\  index [input]                 Index documents
     \\    --db=<myindex.db>           SQLite DB file to use
     \\
     \\  query [query]                 Full-text search the index
@@ -112,6 +122,8 @@ fn parseArgs(allocator: mem.Allocator, args: []const [:0]u8, stdout: *std.Io.Wri
                 cli.command = .{ .render = .{} };
             } else if (mem.eql(u8, arg, "query")) {
                 cli.command = .{ .query = .{} };
+            } else if (mem.eql(u8, arg, "index")) {
+                cli.command = .{ .index = .{} };
             } else {
                 log.err("Unknown command \"{s}\"\n", .{arg});
                 try stdout.print(usage, .{TOPAZ_VERSION});
@@ -154,6 +166,16 @@ fn parseArgs(allocator: mem.Allocator, args: []const [:0]u8, stdout: *std.Io.Wri
                     return null;
                 }
             },
+            .index => |*i| {
+                if (mem.startsWith(u8, arg, "--db=")) {
+                    i.db = try allocator.dupeZ(u8, arg["--db=".len..]);
+                } else {
+                    log.err("Unknown flag for query: \"{s}\"\n", .{arg});
+                    try stdout.print(usage, .{TOPAZ_VERSION});
+                    try stdout.flush();
+                    return null;
+                }
+            },
         }
     }
 
@@ -167,7 +189,7 @@ fn parseArgs(allocator: mem.Allocator, args: []const [:0]u8, stdout: *std.Io.Wri
 }
 
 /// Read file from disk, parse metadata and add to graph
-fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: *PageGraph, input_path: []const u8, db: *DB) !void {
+fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: ?*PageGraph, input_path: []const u8, db: *DB) !void {
     const full_path = try std.fs.path.join(allocator, &[_][]const u8{ input_path, file_path });
     defer allocator.free(full_path);
     const file = std.fs.cwd().openFile(full_path, .{}) catch |err| {
@@ -190,7 +212,7 @@ fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: *Pag
     }
 
     const page = try Page.init(allocator, file_path, buf, stat);
-    try page_graph.addPage(page);
+    if (page_graph) |g| try g.addPage(page);
 
     try indexer.ingestDocument(db, &page, buf);
 }
@@ -208,14 +230,22 @@ fn runQuery(db: *DB, q: QueryArgs) !void {
     try stmt.finalize();
 }
 
-fn runRender(allocator: mem.Allocator, db: *DB, r: RenderArgs) !void {
+fn runIndex(allocator: mem.Allocator, db: *DB, i: IndexArgs) !void {
+    var input_files = try collectInput(allocator, i.input);
+    defer input_files.deinit(allocator);
+    for (input_files.items) |path| {
+        try processFile(allocator, path, null, i.input, db);
+    }
+}
+
+fn collectInput(allocator: mem.Allocator, input: []const u8) !std.ArrayList([]const u8) {
     var input_files = std.ArrayList([]const u8).empty;
 
-    const stat = try std.fs.cwd().statFile(r.input_path);
+    const stat = try std.fs.cwd().statFile(input);
 
     // Collect all .md files from dirs
     if (stat.kind == .directory) {
-        var dir = try std.fs.cwd().openDir(r.input_path, .{ .iterate = true });
+        var dir = try std.fs.cwd().openDir(input, .{ .iterate = true });
         defer dir.close();
         var walker = try dir.walk(allocator);
 
@@ -228,10 +258,17 @@ fn runRender(allocator: mem.Allocator, db: *DB, r: RenderArgs) !void {
                 try input_files.append(allocator, path);
             }
         }
-    } else if (stat.kind == .file and mem.eql(u8, std.fs.path.extension(r.input_path), ".md")) {
+    } else if (stat.kind == .file and mem.eql(u8, std.fs.path.extension(input), ".md")) {
         // Collect individual input files
-        try input_files.append(allocator, r.input_path);
+        try input_files.append(allocator, input);
     }
+
+    return input_files;
+}
+
+fn runRender(allocator: mem.Allocator, db: *DB, r: RenderArgs) !void {
+    var input_files = try collectInput(allocator, r.input_path);
+    defer input_files.deinit(allocator);
 
     var parser = try Parser.init();
 
@@ -313,6 +350,7 @@ pub fn main() !void {
     const db_override = switch (cli.command) {
         .render => |r| r.db,
         .query => |q| q.db,
+        .index => |i| i.db,
     };
 
     // Uses --db arg or defaults to {dirname}.db
@@ -328,6 +366,7 @@ pub fn main() !void {
     switch (cli.command) {
         .query => |q| try runQuery(&db, q),
         .render => |r| try runRender(allocator, &db, r),
+        .index => |i| try runIndex(allocator, &db, i),
     }
 }
 
