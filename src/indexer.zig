@@ -19,6 +19,7 @@ pub fn init(db_name: [:0]const u8) !DB {
         \\CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY,
         \\    path TEXT UNIQUE NOT NULL,
         \\    content TEXT,
+        \\    content_hash INTEGER,
         \\    created_at TEXT NOT NULL,
         \\    updated_at TEXT NOT NULL);
         \\
@@ -61,18 +62,25 @@ pub fn init(db_name: [:0]const u8) !DB {
     return db;
 }
 
-pub fn ingestDocument(db: *DB, page: *const Page) !void {
+fn contentHash(buf: []const u8) u32 {
+    var hasher = std.hash.XxHash32.init(0);
+    hasher.update(buf);
+    return hasher.final();
+}
+
+pub fn ingestDocument(db: *DB, page: *const Page, buf: []const u8) !void {
     var stmt = try db.prepare(
-        \\INSERT OR REPLACE INTO documents (path, content, created_at, updated_at)
-        \\VALUES (:path, :content, :created_at, :updated_at);
+        \\INSERT OR REPLACE INTO documents (path, content, content_hash, created_at, updated_at)
+        \\VALUES (:path, :content, :content_hash, :created_at, :updated_at);
     );
     try stmt.bind(try stmt.paramIndex(":path"), .{ .text = page.path });
     try stmt.bind(try stmt.paramIndex(":content"), .{ .text = page.buf });
+    try stmt.bind(try stmt.paramIndex(":content_hash"), .{ .int64 = @intCast(contentHash(buf)) });
     try stmt.bind(try stmt.paramIndex(":created_at"), .{ .text = page.meta.created_at });
     try stmt.bind(try stmt.paramIndex(":updated_at"), .{ .text = page.meta.updated_at });
 
     _ = try stmt.step();
-    try stmt.finalize();
+    defer stmt.finalize() catch {};
 }
 
 /// Full-text search. Returns bound Statement that caller must step through
@@ -82,4 +90,19 @@ pub fn query(db: *DB, search: []const u8) !Statement {
     try stmt.bind(1, .{ .text = search });
 
     return stmt;
+}
+
+pub fn checkModified(db: *DB, path: []const u8, stat: std.fs.File.Stat, buf: []const u8) !bool {
+    // TODO: use subsec
+    var stmt = try db.prepare("SELECT path, unixepoch(updated_at), content_hash FROM documents WHERE path = :path");
+    try stmt.bind(1, .{ .text = path });
+    const res = try stmt.step();
+    if (res == .Done) return true;
+
+    const mtime = stmt.column(1, .int).int;
+    const known_hash = stmt.column(2, .int64).int64;
+
+    defer stmt.finalize() catch {};
+
+    return if (stat.mtime > mtime) contentHash(buf) != known_hash else false;
 }
