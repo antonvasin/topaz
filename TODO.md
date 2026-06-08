@@ -27,8 +27,9 @@
 
 ### 0.0.3
 
-- [ ] Index text content into sqlite DB
-- [ ] Basic BS25 search and querying via CLI
+- [x] Index text content into sqlite DB
+- [x] Basic BS25 search and querying via CLI
+- [ ] Check for modified files, fetch from DB if not
 
 ## Tasks
 
