@@ -41,16 +41,20 @@ pub const std_options: std.Options = .{
 };
 
 const RenderArgs = struct {
-    /// Input source, defaults to current directory.
+    /// Input source
     input_path: []const u8 = ".",
-    /// Output directory, defaults to 'topaz-out'.
+    /// Output directory
     output_path: []const u8 = "topaz-out",
-    /// HTML template path to use, if any.
+    /// HTML template path to use
     template: ?[]const u8 = null,
+    /// SQLite DB file to use
+    db: ?[:0]const u8 = null,
 };
 
 const QueryArgs = struct {
     query: []const u8 = "",
+    /// SQLite DB file to use
+    db: ?[:0]const u8 = null,
 };
 
 const Command = union(enum) {
@@ -70,22 +74,23 @@ const usage =
     \\Usage: topaz [--debug] <command> [args]
     \\
     \\Commands:
-    \\  render [input]              Render markdown to HTML
-    \\    --out=<outdir>            Directory to output rendered HTML (default: topaz-out)
-    \\    --template=<template>     HTML template to use
+    \\  render [input]                Render markdown to HTML
+    \\    --out=<outdir>              Directory to output rendered HTML (default: topaz-out)
+    \\    --template=<template.html>  HTML template to use
+    \\    --db=<myindex.db>           SQLite DB file to use
     \\
-    \\  query [query]               Full-text search the index
+    \\  query [query]                 Full-text search the index
+    \\    --db=<myindex.db>           SQLite DB file to use
     \\
     \\Global:
-    \\  --debug                     Enable debug logging
-    \\  --help                      Print this help message
+    \\  --debug                       Enable debug logging
+    \\  --help                        Print this help message
     \\
 ;
 
 /// Parse argv into a `Cli`. Returns null when there is nothing to run
 /// (after printing help for --help, a missing/unknown command, or a bad flag).
-///
-/// TODO: drive this from comptime type and remove hard-coded arguments
+/// TODO: implement proper args parser that uses comptime
 fn parseArgs(allocator: mem.Allocator, args: []const [:0]u8, stdout: *std.Io.Writer) !?Cli {
     var cli = Cli{ .command = undefined };
     var have_command = false;
@@ -125,6 +130,8 @@ fn parseArgs(allocator: mem.Allocator, args: []const [:0]u8, stdout: *std.Io.Wri
                 } else if (mem.startsWith(u8, arg, "--template=")) {
                     r.template = try allocator.dupe(u8, arg[11..]);
                     log.info("Using template {s}", .{r.template.?});
+                } else if (mem.startsWith(u8, arg, "--db=")) {
+                    r.db = try allocator.dupeZ(u8, arg["--db=".len..]);
                 } else if (!mem.startsWith(u8, arg, "--")) {
                     r.input_path = try allocator.dupe(u8, arg);
                 } else {
@@ -135,7 +142,9 @@ fn parseArgs(allocator: mem.Allocator, args: []const [:0]u8, stdout: *std.Io.Wri
                 }
             },
             .query => |*q| {
-                if (!mem.startsWith(u8, arg, "--")) {
+                if (mem.startsWith(u8, arg, "--db=")) {
+                    q.db = try allocator.dupeZ(u8, arg["--db=".len..]);
+                } else if (!mem.startsWith(u8, arg, "--")) {
                     q.query = try allocator.dupe(u8, arg);
                     log.info("Processing query {s}", .{q.query});
                 } else {
@@ -177,7 +186,7 @@ fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: *Pag
 
     // XXX: debug
     if (is_modified) {
-        std.debug.print("{s} modified since last run\n", .{ file_path, is_modified });
+        std.debug.print("{s} modified since last run\n", .{file_path});
     }
 
     const page = try Page.init(allocator, file_path, buf, stat);
@@ -301,10 +310,17 @@ pub fn main() !void {
 
     const cli = (try parseArgs(allocator, args, stdout)) orelse return;
 
-    // Initialize db
-    var dirname: [1024]u8 = undefined;
-    const cur_dir = try std.fs.cwd().realpath(".", &dirname);
-    const db_name = try std.fmt.allocPrintSentinel(allocator, "{s}.db", .{std.fs.path.basename(cur_dir)}, 0);
+    const db_override = switch (cli.command) {
+        .render => |r| r.db,
+        .query => |q| q.db,
+    };
+
+    // Uses --db arg or defaults to {dirname}.db
+    const db_name = db_override orelse blk: {
+        var dirname: [1024]u8 = undefined;
+        const cur_dir = try std.fs.cwd().realpath(".", &dirname);
+        break :blk try std.fmt.allocPrintSentinel(allocator, "{s}.db", .{std.fs.path.basename(cur_dir)}, 0);
+    };
 
     var db = try indexer.init(db_name);
     defer db.close();
