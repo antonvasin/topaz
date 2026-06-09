@@ -62,7 +62,7 @@ pub fn init(db_name: [:0]const u8) !DB {
     return db;
 }
 
-fn contentHash(buf: []const u8) u32 {
+pub fn contentHash(buf: []const u8) u32 {
     var hasher = std.hash.XxHash32.init(0);
     hasher.update(buf);
     return hasher.final();
@@ -92,17 +92,21 @@ pub fn query(db: *DB, search: []const u8) !Statement {
     return stmt;
 }
 
-pub fn checkModified(db: *DB, path: []const u8, stat: std.fs.File.Stat, buf: []const u8) !bool {
-    // TODO: use subsec
-    var stmt = try db.prepare("SELECT path, unixepoch(updated_at), content_hash FROM documents WHERE path = :path");
-    try stmt.bind(1, .{ .text = path });
-    const res = try stmt.step();
-    if (res == .Done) return true;
+const IndexEntry = struct { mtime: i64, hash: i64 };
 
-    const mtime = stmt.column(1, .int).int;
-    const known_hash = stmt.column(2, .int64).int64;
+pub fn getChecksums(allocator: std.mem.Allocator, db: *DB) !std.StringHashMap(IndexEntry) {
+    var stmt = try db.prepare("SELECT path, unixepoch(updated_at), content_hash FROM documents");
+    var coll = std.StringHashMap(IndexEntry).init(allocator);
 
-    defer stmt.finalize() catch {};
+    while (try stmt.step() == .RowAvailable) {
+        const key = try allocator.dupe(u8, stmt.column(0, .text).text);
+        const mtime = stmt.column(1, .int).int;
+        const hash = stmt.column(2, .int64).int64;
 
-    return if (stat.mtime > mtime) contentHash(buf) != known_hash else false;
+        try coll.put(key, .{ .mtime = mtime, .hash = hash });
+    }
+
+    try stmt.finalize();
+
+    return coll;
 }

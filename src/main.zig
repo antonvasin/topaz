@@ -169,6 +169,8 @@ fn parseArgs(allocator: mem.Allocator, args: []const [:0]u8, stdout: *std.Io.Wri
             .index => |*i| {
                 if (mem.startsWith(u8, arg, "--db=")) {
                     i.db = try allocator.dupeZ(u8, arg["--db=".len..]);
+                } else if (!mem.startsWith(u8, arg, "--")) {
+                    i.input = try allocator.dupe(u8, arg);
                 } else {
                     log.err("Unknown flag for query: \"{s}\"\n", .{arg});
                     try stdout.print(usage, .{TOPAZ_VERSION});
@@ -200,16 +202,10 @@ fn processFile(allocator: mem.Allocator, file_path: []const u8, page_graph: ?*Pa
 
     const stat = try file.stat();
     log.info("Processing {s} ({d}b)\n", .{ file_path, stat.size });
+
     const buf = try allocator.alloc(u8, stat.size);
     errdefer allocator.free(buf);
     _ = try std.fs.cwd().readFile(full_path, buf);
-
-    const is_modified = try indexer.checkModified(db, file_path, stat, buf);
-
-    // XXX: debug
-    if (is_modified) {
-        std.debug.print("{s} modified since last run\n", .{file_path});
-    }
 
     const page = try Page.init(allocator, file_path, buf, stat);
     if (page_graph) |g| try g.addPage(page);
@@ -233,7 +229,28 @@ fn runQuery(db: *DB, q: QueryArgs) !void {
 fn runIndex(allocator: mem.Allocator, db: *DB, i: IndexArgs) !void {
     var input_files = try collectInput(allocator, i.input);
     defer input_files.deinit(allocator);
+    var index = try indexer.getChecksums(allocator, db);
+    defer index.deinit();
+
     for (input_files.items) |path| {
+        const full_path = try std.fs.path.join(allocator, &[_][]const u8{ i.input, path });
+        defer allocator.free(full_path);
+        const file = std.fs.cwd().openFile(full_path, .{ .mode = .read_only }) catch {
+            log.err("Failed to read file {s}", .{path});
+            continue;
+        };
+        defer file.close();
+        const stat = try file.stat();
+
+        if (index.get(path)) |entry| {
+            if (entry.mtime == stat.mtime) continue;
+            const buf = try allocator.alloc(u8, stat.size);
+            errdefer allocator.free(buf);
+            const content = try std.fs.cwd().readFile(full_path, buf);
+            const hash = indexer.contentHash(content);
+            if (hash == entry.hash) continue;
+        }
+
         try processFile(allocator, path, null, i.input, db);
     }
 }
@@ -253,7 +270,7 @@ fn collectInput(allocator: mem.Allocator, input: []const u8) !std.ArrayList([]co
             var lower: [1024]u8 = undefined;
             const normalized_basename = std.ascii.lowerString(&lower, entry.basename);
 
-            if (entry.kind == .file and mem.eql(u8, std.fs.path.extension(normalized_basename), ".md") and !mem.eql(u8, normalized_basename, "readme.md")) {
+            if (entry.kind == .file and mem.eql(u8, std.fs.path.extension(normalized_basename), ".md")) {
                 const path = try allocator.dupe(u8, entry.path);
                 try input_files.append(allocator, path);
             }
