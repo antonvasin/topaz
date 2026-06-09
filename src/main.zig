@@ -243,7 +243,8 @@ fn runIndex(allocator: mem.Allocator, db: *DB, i: IndexArgs) !void {
         const stat = try file.stat();
 
         if (index.get(path)) |entry| {
-            if (entry.mtime == stat.mtime) continue;
+            if (entry.mtime == @as(i64, @intCast(@divTrunc(stat.mtime, std.time.ns_per_s)))) continue;
+            std.debug.print("Reading file contents {s}\n", .{full_path});
             const buf = try allocator.alloc(u8, stat.size);
             errdefer allocator.free(buf);
             const content = try std.fs.cwd().readFile(full_path, buf);
