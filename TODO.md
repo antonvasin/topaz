@@ -29,7 +29,13 @@
 
 - [x] Index text content into sqlite DB
 - [x] Basic FTS5 search and querying via CLI
-- [ ] Check for modified files, fetch from DB if not
+- [ ] Check for modified files, fetch from DB if not modified
+
+### 0.0.4
+
+- [ ] Setup sqlite-vec extension
+- [ ] Generate embeddings during parsing
+- [ ] Basic semantic search
 
 ## Tasks
 
