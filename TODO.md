@@ -28,7 +28,7 @@
 ### 0.0.3
 
 - [ ] Index text content into sqlite DB
-- [ ] Basic BS25 search and querying via CLI
+- [ ] Basic FTS and querying via CLI
 
 ## Tasks
 
