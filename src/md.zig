@@ -183,7 +183,7 @@ pub const Parser = struct {
 
                     var id: []const u8 = undefined;
                     var has_custom_id: bool = false;
-                    if (mem.indexOf(u8, raw_header_text, "{#")) |start_idx| {
+                    if (mem.find(u8, raw_header_text, "{#")) |start_idx| {
                         if (mem.endsWith(u8, raw_header_text, "}")) {
                             id = try ctx.allocator.dupe(u8, raw_header_text[start_idx + 2 .. raw_header_text.len - 1]);
                             header_text = try ctx.allocator.dupe(u8, raw_header_text[0..start_idx]);

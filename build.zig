@@ -62,11 +62,13 @@ pub fn build(b: *std.Build) !void {
     root_module.addCSourceFile(.{ .file = anyascii.path("impl/c/anyascii.c") });
 
     const src_abs = lexbor.path("source").getPath(b);
-    var src_dir = try std.fs.openDirAbsolute(src_abs, .{ .iterate = true });
+    const io = b.graph.io;
+    const src_dir = try std.Io.Dir.openDirAbsolute(io, src_abs, .{ .iterate = true });
+    defer std.Io.Dir.close(src_dir, io);
     var files: std.ArrayListUnmanaged([]const u8) = .empty;
-    var walker = try src_dir.walk(b.allocator);
+    var walker = try std.Io.Dir.walk(src_dir, b.allocator);
     defer walker.deinit();
-    while (try walker.next()) |entry| {
+    while (try walker.next(io)) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.path, ".c")) continue;
         if (target.result.os.tag == .windows) {
@@ -87,8 +89,8 @@ pub fn build(b: *std.Build) !void {
         }),
     });
 
-    lexbor_lib.addIncludePath(lexbor.path("source"));
-    lexbor_lib.addCSourceFiles(.{
+    lexbor_lib.root_module.addIncludePath(lexbor.path("source"));
+    lexbor_lib.root_module.addCSourceFiles(.{
         .root = lexbor.path("source"),
         .files = files.items,
         .flags = &.{ "-std=c99", "-DLEXBOR_STATIC", "-w" },

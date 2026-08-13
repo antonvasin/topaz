@@ -335,7 +335,9 @@ pub const RenderContext = struct {
             } else if (char == '&') {
                 try self.write("&amp;");
             } else {
-                try self.buf.writer(self.allocator).print("%{X:0>2}", .{char});
+                var hex_buf: [3]u8 = undefined;
+                const hex_str = try std.fmt.bufPrint(&hex_buf, "%{X:0>2}", .{char});
+                try self.write(hex_str);
             }
         }
     }

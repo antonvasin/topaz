@@ -1,5 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
+const Io = std.Io;
 const Yaml = @import("yaml").Yaml;
 const log = std.log.scoped(.graph);
 
@@ -61,7 +62,7 @@ pub const Page = struct {
         level: HeaderLevel,
     };
 
-    pub fn init(allocator: mem.Allocator, file_path: []const u8, buf: []const u8, stat: std.fs.File.Stat) !Page {
+    pub fn init(allocator: mem.Allocator, file_path: []const u8, buf: []const u8, stat: Io.File.Stat) !Page {
         var arena = std.heap.ArenaAllocator.init(allocator);
         const page_allocator = arena.allocator();
 
@@ -99,8 +100,8 @@ pub const Page = struct {
             .skip = false,
             .url = name,
             .size = stat.size,
-            .created_at = formatTimestamp(created_at, @intCast(@divTrunc(stat.ctime, std.time.ns_per_s))),
-            .updated_at = formatTimestamp(updated_at, @intCast(@divTrunc(stat.mtime, std.time.ns_per_s))),
+            .created_at = formatTimestamp(created_at, stat.ctime.toSeconds()),
+            .updated_at = formatTimestamp(updated_at, stat.mtime.toSeconds()),
         };
 
         if (frontmatter) |yml| {
@@ -300,13 +301,15 @@ test "Page" {
             \\Paragraph text
         ;
         var page = try Page.init(allocator, "note.md", buf, .{
-            .ctime = 1,
-            .mtime = 2,
-            .atime = 3,
+            .ctime = .{ .nanoseconds = 1 },
+            .mtime = .{ .nanoseconds = 2 },
+            .atime = .{ .nanoseconds = 3 },
             .size = 4,
             .kind = .file,
             .inode = 5,
-            .mode = 0,
+            .nlink = 1,
+            .permissions = @enumFromInt(0),
+            .block_size = 4096,
         });
         defer page.deinit();
         try testing.expect(mem.eql(u8, page.name, "note"));
@@ -326,13 +329,15 @@ test "Page" {
         ;
 
         var page = try Page.init(allocator, "note.md", buf, .{
-            .ctime = 1,
-            .mtime = 2,
-            .atime = 3,
+            .ctime = .{ .nanoseconds = 1 },
+            .mtime = .{ .nanoseconds = 2 },
+            .atime = .{ .nanoseconds = 3 },
             .size = 4,
             .kind = .file,
             .inode = 5,
-            .mode = 0,
+            .nlink = 1,
+            .permissions = @enumFromInt(0),
+            .block_size = 4096,
         });
         defer page.deinit();
         try testing.expectEqual(page.meta.skip, true);

@@ -9,8 +9,8 @@ const c = @cImport({
 pub const ExecCallback = *const fn (
     ctx: ?*anyopaque,
     num_results: c_int,
-    cols: [*c][*c]c_char,
-    rows: [*c][*c]c_char,
+    cols: [*c][*c]u8,
+    rows: [*c][*c]u8,
 ) callconv(.c) c_int;
 
 pub const DB = struct {
