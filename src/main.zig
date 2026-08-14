@@ -15,6 +15,7 @@ const md = @import("./md.zig");
 const Parser = md.Parser;
 const parse_html = @import("./parse_html.zig");
 const RenderContext = @import("./render_html.zig").RenderContext;
+const Server = @import("./server.zig");
 
 const TOPAZ_VERSION = "0.0.2";
 var debug_enabled: bool = false;
@@ -94,7 +95,7 @@ const usage =
     \\  query [query]                 Full-text search the index
     \\
     \\  serve                         Serve static files
-    \\    --port=<8080>               Port for HTTP server to use
+    \\    --port=<10547>               Port for HTTP server to use
     \\
     \\Global:
     \\  --db=<myindex.db>             SQLite DB file to use
@@ -128,7 +129,7 @@ fn parseArgs(allocator: mem.Allocator, args: []const [:0]const u8) !?Cli {
             } else if (mem.eql(u8, arg, "index")) {
                 cli.command = .{ .index = .{} };
             } else if (mem.eql(u8, arg, "serve")) {
-                cli.command = .{ .serve = .{ .port = 8080 } };
+                cli.command = .{ .serve = .{ .port = 10547 } };
             } else {
                 log.err("Unknown command \"{s}\"\n", .{arg});
                 return null;
@@ -357,36 +358,6 @@ fn runRender(allocator: mem.Allocator, io: Io, db: *DB, r: RenderArgs) !void {
     }
 }
 
-const LISTEN_ADDR = "127.0.0.1";
-
-fn runServer(io: Io, args: ServerArgs) !void {
-    const slog = std.log.scoped(.http);
-    slog.info("Starting server on http://{s}:{d}", .{ LISTEN_ADDR, args.port });
-    const addr = try std.Io.net.IpAddress.parseIp4(LISTEN_ADDR, args.port);
-
-    var server = try addr.listen(io, .{ .reuse_address = true });
-    defer server.deinit(io);
-
-    while (true) {
-        slog.info("Waiting for connection…", .{});
-        var stream = try server.accept(io);
-        defer stream.close(io);
-        slog.info("Got TCP connection", .{});
-
-        var read_buf: [1024]u8 = undefined;
-        var write_buf: [1024]u8 = undefined;
-        var reader = stream.reader(io, &read_buf);
-        var writer = stream.writer(io, &write_buf);
-
-        var http_server = std.http.Server.init(&reader.interface, &writer.interface);
-        var req = try http_server.receiveHead();
-        slog.info("{s} {s}", .{ @tagName(req.head.method), req.head.target });
-
-        try req.respond("Hellow", .{ .status = .ok });
-        slog.info("Response sent, closing connection", .{});
-    }
-}
-
 pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
     const io = init.io;
@@ -413,7 +384,7 @@ pub fn main(init: std.process.Init) !void {
             .query => |q| try runQuery(&db, q),
             .render => |r| try runRender(allocator, io, &db, r),
             .index => |i| try runIndex(allocator, io, &db, i),
-            .serve => |s| try runServer(io, s),
+            .serve => |s| try Server.startServer(io, s.port),
         }
     } else {
         try stdout.print(usage, .{TOPAZ_VERSION});
