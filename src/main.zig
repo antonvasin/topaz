@@ -40,39 +40,43 @@ pub const std_options: std.Options = .{
     },
 };
 
+const GlobalArgs = struct {
+    /// SQLite DB file to use
+    db: ?[:0]const u8 = null,
+};
+
 const RenderArgs = struct {
     /// Input source
-    input_path: []const u8 = ".",
+    input: []const u8 = ".",
     /// Output directory
     output_path: []const u8 = "topaz-out",
     /// HTML template path to use
     template: ?[]const u8 = null,
-    /// SQLite DB file to use
-    db: ?[:0]const u8 = null,
 };
 
 const QueryArgs = struct {
     query: []const u8 = "",
-    /// SQLite DB file to use
-    db: ?[:0]const u8 = null,
 };
 
 const IndexArgs = struct {
+    /// Input source
     input: []const u8 = ".",
-    /// SQLite DB file to use
-    db: ?[:0]const u8 = null,
 };
 
-const Command = union(enum) {
-    render: RenderArgs,
-    query: QueryArgs,
-    index: IndexArgs,
+const ServerArgs = struct {
+    port: u16,
 };
 
 const Cli = struct {
     /// Global --debug flag, accepted anywhere on the command line.
     debug: bool = false,
-    command: Command,
+    args: GlobalArgs,
+    command: union(enum) {
+        render: RenderArgs,
+        query: QueryArgs,
+        index: IndexArgs,
+        serve: ServerArgs,
+    },
 };
 
 const usage =
@@ -84,15 +88,16 @@ const usage =
     \\  render [input]                Render markdown to HTML
     \\    --out=<outdir>              Directory to output rendered HTML (default: topaz-out)
     \\    --template=<template.html>  HTML template to use
-    \\    --db=<myindex.db>           SQLite DB file to use
     \\
     \\  index [input]                 Index documents
-    \\    --db=<myindex.db>           SQLite DB file to use
     \\
     \\  query [query]                 Full-text search the index
-    \\    --db=<myindex.db>           SQLite DB file to use
+    \\
+    \\  serve                         Serve static files
+    \\    --port=<8080>               Port for HTTP server to use
     \\
     \\Global:
+    \\  --db=<myindex.db>             SQLite DB file to use
     \\  --debug                       Enable debug logging
     \\  --help                        Print this help message
     \\
@@ -102,7 +107,7 @@ const usage =
 /// (after printing help for --help, a missing/unknown command, or a bad flag).
 /// TODO: implement proper args parser that uses comptime
 fn parseArgs(allocator: mem.Allocator, args: []const [:0]const u8) !?Cli {
-    var cli = Cli{ .command = undefined };
+    var cli = Cli{ .command = undefined, .args = undefined };
     var have_command = false;
 
     for (args[1..]) |arg| {
@@ -122,6 +127,8 @@ fn parseArgs(allocator: mem.Allocator, args: []const [:0]const u8) !?Cli {
                 cli.command = .{ .query = .{} };
             } else if (mem.eql(u8, arg, "index")) {
                 cli.command = .{ .index = .{} };
+            } else if (mem.eql(u8, arg, "serve")) {
+                cli.command = .{ .serve = .{ .port = 8080 } };
             } else {
                 log.err("Unknown command \"{s}\"\n", .{arg});
                 return null;
@@ -130,44 +137,51 @@ fn parseArgs(allocator: mem.Allocator, args: []const [:0]const u8) !?Cli {
             continue;
         }
 
-        switch (cli.command) {
-            .render => |*r| {
-                if (mem.startsWith(u8, arg, "--out=")) {
-                    r.output_path = try allocator.dupe(u8, arg[6..]);
-                    log.info("Out dir is \"{s}\"\n", .{r.output_path});
-                } else if (mem.startsWith(u8, arg, "--template=")) {
-                    r.template = try allocator.dupe(u8, arg[11..]);
-                    log.info("Using template {s}", .{r.template.?});
-                } else if (mem.startsWith(u8, arg, "--db=")) {
-                    r.db = try allocator.dupeZ(u8, arg["--db=".len..]);
-                } else if (!mem.startsWith(u8, arg, "--")) {
-                    r.input_path = try allocator.dupe(u8, arg);
-                } else {
-                    log.err("Unknown flag for render: \"{s}\"\n", .{arg});
-                    return null;
-                }
-            },
-            .query => |*q| {
-                if (mem.startsWith(u8, arg, "--db=")) {
-                    q.db = try allocator.dupeZ(u8, arg["--db=".len..]);
-                } else if (!mem.startsWith(u8, arg, "--")) {
-                    q.query = try allocator.dupe(u8, arg);
-                    log.info("Processing query {s}", .{q.query});
-                } else {
-                    log.err("Unknown flag for query: \"{s}\"\n", .{arg});
-                    return null;
-                }
-            },
-            .index => |*i| {
-                if (mem.startsWith(u8, arg, "--db=")) {
-                    i.db = try allocator.dupeZ(u8, arg["--db=".len..]);
-                } else if (!mem.startsWith(u8, arg, "--")) {
-                    i.input = try allocator.dupe(u8, arg);
-                } else {
-                    log.err("Unknown flag for query: \"{s}\"\n", .{arg});
-                    return null;
-                }
-            },
+        if (mem.startsWith(u8, arg, "--db=")) {
+            // FIXME: dupeZ is deprecated
+            cli.args.db = try allocator.dupeZ(u8, arg["--db=".len..]);
+        } else {
+            switch (cli.command) {
+                .render => |*r| {
+                    if (mem.startsWith(u8, arg, "--out=")) {
+                        r.output_path = try allocator.dupe(u8, arg[6..]);
+                        log.info("Out dir is \"{s}\"\n", .{r.output_path});
+                    } else if (mem.startsWith(u8, arg, "--template=")) {
+                        r.template = try allocator.dupe(u8, arg[11..]);
+                        log.info("Using template {s}", .{r.template.?});
+                    } else if (!mem.startsWith(u8, arg, "--")) {
+                        r.input = try allocator.dupe(u8, arg);
+                    } else {
+                        log.err("Unknown flag for render: \"{s}\"\n", .{arg});
+                        return null;
+                    }
+                },
+                .query => |*q| {
+                    if (!mem.startsWith(u8, arg, "--")) {
+                        q.query = try allocator.dupe(u8, arg);
+                        log.info("Processing query {s}", .{q.query});
+                    } else {
+                        log.err("Unknown flag for query: \"{s}\"\n", .{arg});
+                        return null;
+                    }
+                },
+                .index => |*i| {
+                    if (!mem.startsWith(u8, arg, "--")) {
+                        i.input = try allocator.dupe(u8, arg);
+                    } else {
+                        log.err("Unknown flag for query: \"{s}\"\n", .{arg});
+                        return null;
+                    }
+                },
+                .serve => |*s| {
+                    if (mem.startsWith(u8, arg, "--port=")) {
+                        const portArg = arg[7..];
+                        s.port = std.fmt.parseInt(u16, portArg, 10) catch |err| {
+                            std.process.fatal("Unable to parse port '{s}': {s}", .{ portArg, @errorName(err) });
+                        };
+                    }
+                },
+            }
         }
     }
 
@@ -276,7 +290,7 @@ fn collectInput(allocator: mem.Allocator, io: Io, input: []const u8) !std.ArrayL
 }
 
 fn runRender(allocator: mem.Allocator, io: Io, db: *DB, r: RenderArgs) !void {
-    var input_files = try collectInput(allocator, io, r.input_path);
+    var input_files = try collectInput(allocator, io, r.input);
     defer input_files.deinit(allocator);
 
     var parser = try Parser.init();
@@ -300,7 +314,7 @@ fn runRender(allocator: mem.Allocator, io: Io, db: *DB, r: RenderArgs) !void {
 
     // First pass: read files into memory and parse metadata
     for (input_files.items) |path| {
-        try processFile(allocator, io, path, &page_graph, r.input_path, db);
+        try processFile(allocator, io, path, &page_graph, r.input, db);
         const page_name = path[0 .. path.len - 3];
         var ctx = try RenderContext.init(allocator, &page_graph);
         if (template_file) |template| {
@@ -343,6 +357,36 @@ fn runRender(allocator: mem.Allocator, io: Io, db: *DB, r: RenderArgs) !void {
     }
 }
 
+const LISTEN_ADDR = "127.0.0.1";
+
+fn runServer(io: Io, args: ServerArgs) !void {
+    const slog = std.log.scoped(.http);
+    slog.info("Starting server on http://{s}:{d}", .{ LISTEN_ADDR, args.port });
+    const addr = try std.Io.net.IpAddress.parseIp4(LISTEN_ADDR, args.port);
+
+    var server = try addr.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+
+    while (true) {
+        slog.info("Waiting for connection…", .{});
+        var stream = try server.accept(io);
+        defer stream.close(io);
+        slog.info("Got TCP connection", .{});
+
+        var read_buf: [1024]u8 = undefined;
+        var write_buf: [1024]u8 = undefined;
+        var reader = stream.reader(io, &read_buf);
+        var writer = stream.writer(io, &write_buf);
+
+        var http_server = std.http.Server.init(&reader.interface, &writer.interface);
+        var req = try http_server.receiveHead();
+        slog.info("{s} {s}", .{ @tagName(req.head.method), req.head.target });
+
+        try req.respond("Hellow", .{ .status = .ok });
+        slog.info("Response sent, closing connection", .{});
+    }
+}
+
 pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
     const io = init.io;
@@ -354,11 +398,7 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(allocator);
 
     if (try parseArgs(allocator, args)) |cli| {
-        const db_override = switch (cli.command) {
-            .render => |r| r.db,
-            .query => |q| q.db,
-            .index => |i| i.db,
-        };
+        const db_override = cli.args.db;
         // Uses --db arg or defaults to {dirname}.db
         const db_name = db_override orelse blk: {
             var dirname: [1024]u8 = undefined;
@@ -373,6 +413,7 @@ pub fn main(init: std.process.Init) !void {
             .query => |q| try runQuery(&db, q),
             .render => |r| try runRender(allocator, io, &db, r),
             .index => |i| try runIndex(allocator, io, &db, i),
+            .serve => |s| try runServer(io, s),
         }
     } else {
         try stdout.print(usage, .{TOPAZ_VERSION});
