@@ -1,11 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 
-const c = @cImport({
-    @cInclude("lexbor/html/html.h");
-    @cInclude("lexbor/dom/interfaces/element.h");
-    @cInclude("lexbor/dom/interfaces/document_type.h");
-});
+const c = @import("c");
 
 pub const Error = error{
     ParserInit,

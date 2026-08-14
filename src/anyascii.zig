@@ -1,8 +1,6 @@
 const std = @import("std");
 
-const c = @cImport({
-    @cInclude("anyascii.h");
-});
+const c = @import("c");
 
 pub fn transliterate(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     if (input.len == 0) return try allocator.dupe(u8, "");

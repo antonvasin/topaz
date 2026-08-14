@@ -1,0 +1,6 @@
+#include "md4c.h"
+#include "anyascii.h"
+#include "sqlite3.h"
+#include "lexbor/html/html.h"
+#include "lexbor/dom/interfaces/element.h"
+#include "lexbor/dom/interfaces/document_type.h"

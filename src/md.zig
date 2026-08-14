@@ -1,8 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
-const c = @cImport({
-    @cInclude("md4c.h");
-});
+const c = @import("c");
 const anyascii = @import("anyascii.zig");
 
 const log = std.log.scoped(.md);

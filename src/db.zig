@@ -2,9 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.sqlite);
 const testing = std.testing;
 
-const c = @cImport({
-    @cInclude("sqlite3.h");
-});
+const c = @import("c");
 
 pub const ExecCallback = *const fn (
     ctx: ?*anyopaque,

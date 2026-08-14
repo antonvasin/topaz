@@ -1,8 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const c = @cImport({
-    @cInclude("md4c.h");
-});
+const c = @import("c");
 const graph = @import("./graph.zig");
 const PageGraph = graph.PageGraph;
 const parser = @import("./parse_html.zig");

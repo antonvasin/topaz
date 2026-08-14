@@ -15,6 +15,12 @@ pub fn build(b: *std.Build) !void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const md4c = b.dependency("md4c", .{
         .target = target,
         .optimize = optimize,
@@ -40,27 +46,31 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
-    const root_module = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
     const exe = b.addExecutable(.{
         .name = "topaz",
-        .root_module = root_module,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{.{
+                .name = "c",
+                .module = translate_c.createModule(),
+            }},
+        }),
     });
 
-    root_module.link_libc = true;
+    translate_c.addIncludePath(md4c.path("src"));
+    exe.root_module.addIncludePath(md4c.path("src"));
+    exe.root_module.addCSourceFile(.{ .file = md4c.path("src/md4c.c") });
 
-    root_module.addIncludePath(md4c.path("src"));
-    root_module.addCSourceFile(.{ .file = md4c.path("src/md4c.c") });
+    exe.root_module.addImport("yaml", yaml.module("yaml"));
 
-    root_module.addImport("yaml", yaml.module("yaml"));
+    translate_c.addIncludePath(anyascii.path("impl/c"));
+    exe.root_module.addIncludePath(anyascii.path("impl/c"));
+    exe.root_module.addCSourceFile(.{ .file = anyascii.path("impl/c/anyascii.c") });
 
-    root_module.addIncludePath(anyascii.path("impl/c"));
-    root_module.addCSourceFile(.{ .file = anyascii.path("impl/c/anyascii.c") });
-
+    // Collect Lexbor source files
     const src_abs = lexbor.path("source").getPath(b);
     const io = b.graph.io;
     const src_dir = try std.Io.Dir.openDirAbsolute(io, src_abs, .{ .iterate = true });
@@ -95,11 +105,13 @@ pub fn build(b: *std.Build) !void {
         .files = files.items,
         .flags = &.{ "-std=c99", "-DLEXBOR_STATIC", "-w" },
     });
-    root_module.addIncludePath(lexbor.path("source"));
-    root_module.linkLibrary(lexbor_lib);
+    translate_c.addIncludePath(lexbor.path("source"));
+    exe.root_module.addIncludePath(lexbor.path("source"));
+    exe.root_module.linkLibrary(lexbor_lib);
 
-    root_module.addIncludePath(sqlite.path("."));
-    root_module.addCSourceFile(.{
+    translate_c.addIncludePath(sqlite.path("."));
+    exe.root_module.addIncludePath(sqlite.path("."));
+    exe.root_module.addCSourceFile(.{
         .file = sqlite.path("sqlite3.c"),
         .flags = &.{"-DSQLITE_ENABLE_FTS5"},
     });
@@ -133,7 +145,7 @@ pub fn build(b: *std.Build) !void {
     run_step.dependOn(&run_cmd.step);
 
     const exe_unit_tests = b.addTest(.{
-        .root_module = root_module,
+        .root_module = exe.root_module,
     });
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
@@ -146,7 +158,7 @@ pub fn build(b: *std.Build) !void {
 
     const exe_check = b.addExecutable(.{
         .name = "topaz",
-        .root_module = root_module,
+        .root_module = exe.root_module,
     });
     const check = b.step("check", "Check compilation without installation");
     check.dependOn(&exe_check.step);
