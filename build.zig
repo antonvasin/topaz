@@ -154,6 +154,7 @@ pub fn build(b: *std.Build) !void {
         .root_module = exe.root_module,
     });
 
+    exe_unit_tests.root_module.addImport("mime", mime.module("mime"));
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
     // Similar to creating the run step earlier, this exposes a `test` step to

@@ -2,18 +2,23 @@ const Server = @This();
 
 const std = @import("std");
 const Io = std.Io;
+const testing = std.testing;
 const log = std.log.scoped(.server);
 const mime = @import("mime");
 
-root_dir: []const u8,
+root_dir: Io.Dir, // must be opened with .iterate = true
 allocator: std.mem.Allocator,
 io: Io,
+/// Present when server is listening on a port
+server: ?Io.net.Server,
 
-pub fn init(allocator: std.mem.Allocator, io: Io, root_dir: []const u8) Server {
+// TODO: use arena per request
+pub fn init(allocator: std.mem.Allocator, io: Io, root_dir: Io.Dir) Server {
     return .{
         .allocator = allocator,
         .io = io,
         .root_dir = root_dir,
+        .server = null,
     };
 }
 
@@ -22,6 +27,7 @@ pub fn startServer(self: *Server, port: u16) !void {
 
     const addr = std.Io.net.IpAddress{ .ip4 = .loopback(port) };
     var server = try addr.listen(self.io, .{ .reuse_address = true });
+    self.server = server;
     defer server.deinit(self.io);
 
     var group: Io.Group = .init;
@@ -58,32 +64,30 @@ pub fn handleStream(self: *Server, stream: Io.net.Stream) std.Io.Cancelable!void
 }
 
 fn handleRequest(self: *Server, req: *std.http.Server.Request) !void {
+    var arena = std.heap.ArenaAllocator.init(self.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
     var status: std.http.Status = .ok;
     var res_body: []const u8 = "";
-    var headers: ?[]std.http.Header = null;
-    var response: ?Response = null;
-    defer if (response) |*r| r.deinit(self.allocator);
+    var headers: std.ArrayList(std.http.Header) = .empty;
 
     const target = req.head.target;
     const path, const query = if (std.mem.indexOfScalar(u8, target, '?')) |q| .{ target[0..q], target[q..] } else .{ target, "" };
 
-    const sanitized = try self.sanitizePath(path);
-    defer if (sanitized) |s| self.allocator.free(s);
+    const sanitized = try sanitizePath(allocator, path);
 
     if (sanitized) |sanitized_path| {
-        const full_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.root_dir, sanitized_path });
-        defer self.allocator.free(full_path);
-
         switch (req.head.method) {
             .GET => {
                 if (std.mem.eql(u8, sanitized_path, "/foo")) {
                     status = .ok;
                     res_body = "Foo";
                 } else {
-                    response = try self.serveFile(full_path);
-                    status = response.?.status;
-                    res_body = response.?.body orelse std.http.Status.phrase(status) orelse "";
-                    if (response.?.headers) |h| headers = h;
+                    const response = try self.serveFile(allocator, req, sanitized_path);
+                    status = response.status;
+                    res_body = if (status == .not_modified) "" else response.body orelse std.http.Status.phrase(status) orelse "";
+                    if (response.headers) |h| try headers.appendSlice(allocator, h);
                 }
             },
             else => {
@@ -96,11 +100,13 @@ fn handleRequest(self: *Server, req: *std.http.Server.Request) !void {
         res_body = std.http.Status.phrase(status) orelse "";
     }
 
-    var opts: std.http.Server.Request.RespondOptions = .{
-        .status = status,
-    };
+    const date_str = try toRfc1123Date(allocator, Io.Timestamp.now(self.io, .real));
+    if (date_str) |d| try headers.append(allocator, .{ .name = "Date", .value = d });
 
-    if (headers) |h| opts.extra_headers = h;
+    const opts: std.http.Server.Request.RespondOptions = .{
+        .status = status,
+        .extra_headers = headers.items,
+    };
 
     req.respond(res_body, opts) catch |err| {
         log.err("Failed to respond: {s}", .{@errorName(err)});
@@ -115,60 +121,271 @@ const Response = struct {
     status: std.http.Status,
     headers: ?[]std.http.Header = null,
     body: ?[]const u8 = null,
-
-    fn deinit(self: *Response, gpa: std.mem.Allocator) void {
-        if (self.headers) |h| gpa.free(h);
-        if (self.body) |b| gpa.free(b);
-    }
 };
 
-fn serveFile(self: *Server, path: []const u8) !Response {
-    const normalized_path = if (std.mem.endsWith(u8, path, ".html")) try self.allocator.dupe(u8, path) else try std.fmt.allocPrint(self.allocator, "{s}.html", .{path});
-    defer self.allocator.free(normalized_path);
+/// Look up a request header by name (case-insensitive)
+fn getRequestHeader(req: *const std.http.Server.Request, name: []const u8) ?std.http.Header {
+    var it = req.iterateHeaders();
+    while (it.next()) |header| {
+        if (std.ascii.eqlIgnoreCase(header.name, name)) return header;
+    }
+    return null;
+}
 
-    const file_buf = Io.Dir.cwd().readFileAlloc(self.io, normalized_path, self.allocator, Io.Limit.limited(10 * 1024)) catch |err| {
-        switch (err) {
-            error.FileNotFound => return .{ .status = .not_found },
-            error.AccessDenied => return .{ .status = .forbidden },
-            else => return .{ .status = .internal_server_error },
-        }
-    };
+/// Produces Response for static file request. Caller must free returned Response
+fn serveFile(self: *Server, allocator: std.mem.Allocator, req: *std.http.Server.Request, path: []const u8) !Response {
+    const normalized_path = if (std.mem.endsWith(u8, path, ".html")) try allocator.dupe(u8, path) else try std.fmt.allocPrint(allocator, "{s}.html", .{path});
+
+    var headers: std.ArrayList(std.http.Header) = .empty;
 
     const extension = normalized_path[std.mem.lastIndexOfScalar(u8, normalized_path, '.') orelse normalized_path.len - 1 ..];
     const mime_type = mime.extension_map.get(extension) orelse mime.Type.@"text/plain";
+    const mime_str = std.enums.tagName(mime.Type, mime_type) orelse unreachable;
+    try headers.append(allocator, .{ .name = "Content-Type", .value = mime_str });
 
-    var headers: std.ArrayList(std.http.Header) = .empty;
-    try headers.append(self.allocator, .{ .name = "Content-Type", .value = std.enums.tagName(mime.Type, mime_type) orelse unreachable });
+    try headers.append(allocator, .{ .name = "Cache-Control", .value = "public, max-age=0, must-revalidate" });
 
-    return .{
-        .status = .ok,
-        .headers = try headers.toOwnedSlice(self.allocator),
-        .body = file_buf,
-    };
+    const stat = try self.root_dir.statFile(self.io, normalized_path, .{});
+    // TODO: replace with proper hash
+    const etag_str = try std.fmt.allocPrint(allocator, "\"{d}-{d}\"", .{ stat.mtime.toNanoseconds(), stat.size });
+    var not_modified = false;
+    // RFC 7232: If-None-Match takes precedence over If-Modified-Since
+    if (getRequestHeader(req, "If-None-Match")) |inm| {
+        not_modified = std.mem.eql(u8, inm.value, etag_str);
+    } else if (getRequestHeader(req, "If-Modified-Since")) |ims| {
+        if (fromRfc1123Date(ims.value)) |ims_ts| {
+            not_modified = ims_ts.toSeconds() >= stat.mtime.toSeconds();
+        }
+    }
+
+    const mtime_str = try toRfc1123Date(allocator, stat.mtime);
+
+    if (mtime_str) |m| {
+        try headers.append(allocator, .{ .name = "Last-Modified", .value = m });
+        try headers.append(allocator, .{ .name = "Expires", .value = m });
+    }
+
+    try headers.append(allocator, .{ .name = "ETag", .value = etag_str });
+
+    if (not_modified) {
+        return .{
+            .status = .not_modified,
+            .headers = try headers.toOwnedSlice(allocator),
+        };
+    } else {
+        const file_buf = self.root_dir.readFileAlloc(self.io, normalized_path, allocator, Io.Limit.limited(10 * 1024)) catch |err| {
+            switch (err) {
+                error.FileNotFound => return .{ .status = .not_found },
+                error.AccessDenied => return .{ .status = .forbidden },
+                else => return .{ .status = .internal_server_error },
+            }
+        };
+
+        return .{
+            .status = .ok,
+            .headers = try headers.toOwnedSlice(allocator),
+            .body = file_buf,
+        };
+    }
 }
 
-/// Sanitize request path, `null` means invalid request. Caller must free returned string
-fn sanitizePath(self: *Server, url_path: []const u8) !?[]const u8 {
+/// Sanitize request path, `null` means invalid request. Caller must free returned string.
+fn sanitizePath(gpa: std.mem.Allocator, url_path: []const u8) !?[]const u8 {
     var is_empty = false;
     const target = if (url_path.len > 0 and url_path[0] == '/') url_path[1..] else url_path;
     if (target.len == 0) is_empty = true; // serve index
     var iter = std.mem.splitScalar(u8, target, '/');
     var parts: std.ArrayList([]const u8) = .empty;
-    defer parts.deinit(self.allocator);
+    defer parts.deinit(gpa);
     while (iter.next()) |part| {
         if (part.len == 0) continue; // skip "//"
         if (std.mem.eql(u8, part, "..")) return null; // reject "foo/../../etc/passwd"
         if (std.mem.eql(u8, part, ".")) continue; // skip "foo/./bar"
-        if (std.mem.eql(u8, part, "..")) return null; // reject "foo/../../etc/passwd"
         if (std.mem.startsWith(u8, part, ".")) return null; // reject "foo/.hidden"
         if (std.mem.endsWith(u8, part, "~")) return null; // reject "foo/tmp~
         if (std.mem.indexOfScalar(u8, part, 0) != null) return null; // reject null bytes
-        try parts.append(self.allocator, part);
+        try parts.append(gpa, part);
     }
     if (parts.items.len == 0) is_empty = true; // serve index
-    return if (is_empty) try std.fmt.allocPrint(self.allocator, "index.html", .{}) else try std.mem.join(self.allocator, "/", parts.items);
+    return if (is_empty) try std.fmt.allocPrint(gpa, "index.html", .{}) else try std.mem.join(gpa, "/", parts.items);
 }
 
-// fn formatHttpDate(timestamp: Io.Timestamp, buf: []u8) ?[]const u8 {
-//
-// }
+test "static server" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "index.html",
+        .data = "<!doctype html>",
+    });
+
+    var server = Server.init(gpa, io, tmp.dir);
+    const addr = std.Io.net.IpAddress{ .ip4 = .loopback(0) };
+    var listener = try addr.listen(io, .{ .reuse_address = true });
+    defer listener.deinit(io);
+
+    const AcceptAndHandle = struct {
+        fn run(s: *Server, l: *std.Io.net.Server) void {
+            const stream = l.accept(s.io) catch return;
+            s.handleStream(stream) catch {};
+        }
+    };
+    const server_thread = try std.Thread.spawn(.{}, AcceptAndHandle.run, .{ &server, &listener });
+    defer server_thread.join();
+
+    var client: std.http.Client = .{ .allocator = gpa, .io = io };
+    defer client.deinit();
+
+    {
+        var req = try client.request(.GET, .{
+            .scheme = "http",
+            .host = .{ .percent_encoded = "127.0.0.1" },
+            .port = listener.socket.address.ip4.port,
+            .path = .{ .percent_encoded = "/" },
+        }, .{});
+        defer req.deinit();
+        try req.sendBodiless();
+        var head_buf: [2048]u8 = undefined;
+        var response = try req.receiveHead(&head_buf);
+        try testing.expectEqualStrings("text/html", response.head.content_type.?);
+        var response_buf: [1000]u8 = undefined;
+        const reader = response.reader(&response_buf);
+        var body_buf: [1000]u8 = undefined;
+        const has_read = try reader.readSliceShort(&body_buf);
+        const body = body_buf[0..has_read];
+        try std.testing.expectEqualStrings("<!doctype html>", body);
+    }
+}
+
+const day_names = [_][]const u8{ "Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed" };
+
+const month_names = [_][]const u8{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+
+// Converts timestamp to RFC 1123 date (Sun, 21 Oct 2018 12:16:24 GMT). Caller must free the result
+fn toRfc1123Date(gpa: std.mem.Allocator, timestamp: Io.Timestamp) !?[]const u8 {
+    const epoch = std.time.epoch.EpochSeconds{ .secs = @intCast(timestamp.toSeconds()) };
+    const day_info = epoch.getDaySeconds();
+    const year_day = epoch.getEpochDay().calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const day_of_week = epoch.getEpochDay().day % 7;
+
+    return std.fmt.allocPrint(gpa, "{s}, {d:0>2} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} GMT", .{
+        day_names[@intCast(day_of_week)],
+        month_day.day_index + 1,
+        month_names[@intCast(@intFromEnum(month_day.month) - 1)],
+        year_day.year,
+        day_info.getHoursIntoDay(),
+        day_info.getMinutesIntoHour(),
+        day_info.getSecondsIntoMinute(),
+    }) catch return null;
+}
+
+test toRfc1123Date {
+    const date_str = try toRfc1123Date(testing.allocator, Io.Timestamp.fromNanoseconds(std.time.ns_per_s + std.time.ns_per_day));
+    try testing.expect(date_str != null);
+    try testing.expectEqualStrings("Fri, 02 Jan 1970 00:00:01 GMT", date_str.?);
+    defer std.testing.allocator.free(date_str.?);
+}
+
+fn fromRfc1123Date(timestamp: []const u8) ?Io.Timestamp {
+    if (!std.mem.endsWith(u8, timestamp, " GMT")) return null;
+
+    var parts: struct {
+        day: []const u8,
+        date: u5,
+        month: u4,
+        year: u16,
+        h: u6,
+        m: u6,
+        s: u6,
+    } = undefined;
+
+    var cur: usize = 0;
+    var part: usize = 0;
+
+    //      Sun, 21 Oct 2018 12:16:24 GMT
+    // cur  0->4                            day
+    // cur      4->                         date
+    //           5->7
+    // cur         7->8                     month
+    //              8->11
+    // cur             11->12               year
+    //                  12->16
+    // cur                  16->17          time
+    //                       17->25
+    blk: while (cur < timestamp.len) {
+        switch (part) {
+            0 => {
+                const weekday_idx = std.mem.findPos(u8, timestamp, 0, ", ") orelse return null;
+                parts.day = timestamp[cur .. cur + weekday_idx];
+                cur += weekday_idx + 1;
+                part += 1;
+            },
+            1 => {
+                if (cur + 1 >= timestamp.len) return null else cur += 1;
+                const date_idx = std.mem.findScalar(u8, timestamp[cur..], ' ') orelse return null;
+                parts.date = std.fmt.parseInt(u5, timestamp[cur .. cur + date_idx], 10) catch return null;
+                cur += date_idx;
+                part += 1;
+            },
+            2 => {
+                if (cur + 1 >= timestamp.len) return null else cur += 1;
+                const month_idx = std.mem.findScalar(u8, timestamp[cur..], ' ') orelse return null;
+                parts.month = blk2: {
+                    for (month_names, 0..) |name, i| {
+                        if (std.mem.eql(u8, name, timestamp[cur .. cur + month_idx])) break :blk2 @intCast(i + 1);
+                    }
+                    return null;
+                };
+                cur += month_idx;
+                part += 1;
+            },
+            3 => {
+                if (cur + 1 >= timestamp.len) return null else cur += 1;
+                const year_idx = std.mem.findScalar(u8, timestamp[cur..], ' ') orelse return null;
+                parts.year = std.fmt.parseInt(u16, timestamp[cur .. cur + year_idx], 10) catch return null;
+                cur += year_idx;
+                part += 1;
+            },
+            4 => {
+                if (cur + 1 >= timestamp.len) return null else cur += 1;
+                const time_idx = std.mem.findScalar(u8, timestamp[cur..], ' ') orelse return null;
+                const time = timestamp[cur .. cur + time_idx];
+
+                var time_parts = std.mem.splitScalar(u8, time, ':');
+                parts.h = std.fmt.parseInt(u6, time_parts.next() orelse return null, 10) catch return null;
+                parts.m = std.fmt.parseInt(u6, time_parts.next() orelse return null, 10) catch return null;
+                parts.s = std.fmt.parseInt(u6, time_parts.next() orelse return null, 10) catch return null;
+                break :blk;
+            },
+            else => unreachable,
+        }
+    }
+
+    if (parts.year < std.time.epoch.epoch_year or parts.date == 0) return null;
+
+    var days: u64 = 0;
+    for (std.time.epoch.epoch_year..parts.year) |year| days += std.time.epoch.getDaysInYear(@intCast(year));
+    for (1..parts.month) |month| days += std.time.epoch.getDaysInMonth(parts.year, @enumFromInt(month));
+    days += parts.date - 1;
+    // zig fmt: off
+    const secs = days * std.time.epoch.secs_per_day
+        + @as(u32, parts.h) * std.time.s_per_hour
+        + @as(u32, parts.m) * std.time.s_per_min
+        + parts.s;
+    // zig fmt: on
+    return Io.Timestamp.fromNanoseconds(@as(i96, secs) * std.time.ns_per_s);
+}
+
+test fromRfc1123Date {
+    const ts = fromRfc1123Date("Sun, 21 Oct 2018 12:16:24 GMT") orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(1540124184, ts.toSeconds());
+
+    const all_days = fromRfc1123Date("Thu, 01 Jan 1970 00:00:00 GMT") orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(0, all_days.toSeconds());
+
+    try testing.expect(fromRfc1123Date("Sun, 21 Oct 2018 12:16:24 PST") == null); // non-GMT -> rejected
+    try testing.expect(fromRfc1123Date("Sun, 21 Oct 2018 12:16 GMT") == null); // missing seconds -> rejected
+}

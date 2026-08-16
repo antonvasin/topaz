@@ -286,7 +286,8 @@ fn runServer(allocator: mem.Allocator, io: Io, db: *DB, s: ServerArgs) !void {
         .output_path = s.output_path,
         .template = s.template,
     });
-    var server = Server.init(allocator, io, s.output_path);
+    const dir = try Io.Dir.cwd().openDir(io, s.output_path, .{ .iterate = true });
+    var server = Server.init(allocator, io, dir);
     try server.startServer(s.port);
 }
 
