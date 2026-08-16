@@ -31,17 +31,22 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
-    const yaml = b.dependency("yaml", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
     const lexbor = b.dependency("lexbor", .{
         .target = target,
         .optimize = optimize,
     });
 
     const sqlite = b.dependency("sqlite", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const yaml = b.dependency("yaml", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const mime = b.dependency("mime", .{
         .target = target,
         .optimize = optimize,
     });
@@ -63,8 +68,6 @@ pub fn build(b: *std.Build) !void {
     translate_c.addIncludePath(md4c.path("src"));
     exe.root_module.addIncludePath(md4c.path("src"));
     exe.root_module.addCSourceFile(.{ .file = md4c.path("src/md4c.c") });
-
-    exe.root_module.addImport("yaml", yaml.module("yaml"));
 
     translate_c.addIncludePath(anyascii.path("impl/c"));
     exe.root_module.addIncludePath(anyascii.path("impl/c"));
@@ -115,6 +118,9 @@ pub fn build(b: *std.Build) !void {
         .file = sqlite.path("sqlite3.c"),
         .flags = &.{"-DSQLITE_ENABLE_FTS5"},
     });
+
+    exe.root_module.addImport("yaml", yaml.module("yaml"));
+    exe.root_module.addImport("mime", mime.module("mime"));
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

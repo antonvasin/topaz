@@ -3,6 +3,7 @@ const Server = @This();
 const std = @import("std");
 const Io = std.Io;
 const log = std.log.scoped(.server);
+const mime = @import("mime");
 
 root_dir: []const u8,
 allocator: std.mem.Allocator,
@@ -46,20 +47,12 @@ pub fn handleStream(self: *Server, stream: Io.net.Stream) std.Io.Cancelable!void
 
     while (true) {
         var req = http_server.receiveHead() catch |err| switch (err) {
-            error.HttpConnectionClosing => continue,
+            error.HttpConnectionClosing => break,
             else => {
                 log.err("Error: {s}", .{@errorName(err)});
                 break;
             },
         };
-        // var it = req.iterateHeaders();
-        // while (it.next()) |header| {
-        //     log.info("header: {s}: {s}", .{ header.name, header.value });
-        // }
-
-        // req.respond("Hellow", .{ .status = .ok }) catch |err| {
-        //     log.err("Failed to respond: {s}", .{@errorName(err)});
-        // };
         self.handleRequest(&req) catch return std.Io.Cancelable.Canceled;
     }
 }
@@ -67,6 +60,9 @@ pub fn handleStream(self: *Server, stream: Io.net.Stream) std.Io.Cancelable!void
 fn handleRequest(self: *Server, req: *std.http.Server.Request) !void {
     var status: std.http.Status = .ok;
     var res_body: []const u8 = "";
+    var headers: ?[]std.http.Header = null;
+    var response: ?Response = null;
+    defer if (response) |*r| r.deinit(self.allocator);
 
     const target = req.head.target;
     const path, const query = if (std.mem.indexOfScalar(u8, target, '?')) |q| .{ target[0..q], target[q..] } else .{ target, "" };
@@ -75,14 +71,19 @@ fn handleRequest(self: *Server, req: *std.http.Server.Request) !void {
     defer if (sanitized) |s| self.allocator.free(s);
 
     if (sanitized) |sanitized_path| {
+        const full_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.root_dir, sanitized_path });
+        defer self.allocator.free(full_path);
+
         switch (req.head.method) {
             .GET => {
                 if (std.mem.eql(u8, sanitized_path, "/foo")) {
                     status = .ok;
                     res_body = "Foo";
                 } else {
-                    status = .not_found;
-                    res_body = std.http.Status.phrase(status) orelse "";
+                    response = try self.serveFile(full_path);
+                    status = response.?.status;
+                    res_body = response.?.body orelse std.http.Status.phrase(status) orelse "";
+                    if (response.?.headers) |h| headers = h;
                 }
             },
             else => {
@@ -95,11 +96,55 @@ fn handleRequest(self: *Server, req: *std.http.Server.Request) !void {
         res_body = std.http.Status.phrase(status) orelse "";
     }
 
-    req.respond(res_body, .{ .status = status }) catch |err| {
+    var opts: std.http.Server.Request.RespondOptions = .{
+        .status = status,
+    };
+
+    if (headers) |h| opts.extra_headers = h;
+
+    req.respond(res_body, opts) catch |err| {
         log.err("Failed to respond: {s}", .{@errorName(err)});
     };
     // NOTE: for debug only
     log.info("{s} {s}{s} {d}", .{ std.enums.tagName(std.http.Method, req.head.method) orelse "", sanitized orelse "", query, status });
+}
+
+const MaxFileSize = 10 * 1024;
+
+const Response = struct {
+    status: std.http.Status,
+    headers: ?[]std.http.Header = null,
+    body: ?[]const u8 = null,
+
+    fn deinit(self: *Response, gpa: std.mem.Allocator) void {
+        if (self.headers) |h| gpa.free(h);
+        if (self.body) |b| gpa.free(b);
+    }
+};
+
+fn serveFile(self: *Server, path: []const u8) !Response {
+    const normalized_path = if (std.mem.endsWith(u8, path, ".html")) try self.allocator.dupe(u8, path) else try std.fmt.allocPrint(self.allocator, "{s}.html", .{path});
+    defer self.allocator.free(normalized_path);
+
+    const file_buf = Io.Dir.cwd().readFileAlloc(self.io, normalized_path, self.allocator, Io.Limit.limited(10 * 1024)) catch |err| {
+        switch (err) {
+            error.FileNotFound => return .{ .status = .not_found },
+            error.AccessDenied => return .{ .status = .forbidden },
+            else => return .{ .status = .internal_server_error },
+        }
+    };
+
+    const extension = normalized_path[std.mem.lastIndexOfScalar(u8, normalized_path, '.') orelse normalized_path.len - 1 ..];
+    const mime_type = mime.extension_map.get(extension) orelse mime.Type.@"text/plain";
+
+    var headers: std.ArrayList(std.http.Header) = .empty;
+    try headers.append(self.allocator, .{ .name = "Content-Type", .value = std.enums.tagName(mime.Type, mime_type) orelse unreachable });
+
+    return .{
+        .status = .ok,
+        .headers = try headers.toOwnedSlice(self.allocator),
+        .body = file_buf,
+    };
 }
 
 /// Sanitize request path, `null` means invalid request. Caller must free returned string
@@ -123,3 +168,7 @@ fn sanitizePath(self: *Server, url_path: []const u8) !?[]const u8 {
     if (parts.items.len == 0) is_empty = true; // serve index
     return if (is_empty) try std.fmt.allocPrint(self.allocator, "index.html", .{}) else try std.mem.join(self.allocator, "/", parts.items);
 }
+
+// fn formatHttpDate(timestamp: Io.Timestamp, buf: []u8) ?[]const u8 {
+//
+// }

@@ -44,6 +44,10 @@
             .url = "https://codeberg.org/tomFoolery/zig-yaml/archive/c0dbd5c04e5121c9a61fa49da45ee5f03c6607f4.tar.gz",
             .hash = "zig_yaml-0.3.0-C1161gmsAgBMXfMGSbvs1jaocmD2KVCEZRPKBSO0x1Hc",
         },
+        .mime = .{
+            .url = "https://github.com/andrewrk/mime/archive/refs/tags/4.0.0.tar.gz",
+            .hash = "mime-4.0.0-zwmL--0gAACndOVlROQeDnM0chfojNDS8tpohlsBqMNy",
+        },
     },
     .paths = .{
         "build.zig",
