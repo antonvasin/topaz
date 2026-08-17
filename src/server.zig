@@ -34,11 +34,12 @@ pub fn startServer(self: *Server, port: u16) !void {
     defer group.cancel(self.io);
 
     while (true) {
-        const stream = try server.accept(self.io);
+        const stream = server.accept(self.io) catch |err| switch (err) {
+            error.Canceled => break,
+            else => return err,
+        };
         group.async(self.io, handleStream, .{ self, stream });
     }
-
-    try group.await(self.io);
 }
 
 pub fn handleStream(self: *Server, stream: Io.net.Stream) std.Io.Cancelable!void {
@@ -54,12 +55,32 @@ pub fn handleStream(self: *Server, stream: Io.net.Stream) std.Io.Cancelable!void
     while (true) {
         var req = http_server.receiveHead() catch |err| switch (err) {
             error.HttpConnectionClosing => break,
+            error.ReadFailed => {
+                if (reader.err) |read_err| {
+                    if (read_err == error.Canceled) return error.Canceled;
+                    log.err("Error: {s}", .{@errorName(read_err)});
+                }
+                break;
+            },
             else => {
                 log.err("Error: {s}", .{@errorName(err)});
                 break;
             },
         };
-        self.handleRequest(&req) catch return std.Io.Cancelable.Canceled;
+        self.handleRequest(&req) catch |err| switch (err) {
+            error.Canceled => return error.Canceled,
+            error.WriteFailed => {
+                if (writer.err) |write_err| {
+                    if (write_err == error.Canceled) return error.Canceled;
+                    log.err("Failed to respond: {s}", .{@errorName(write_err)});
+                }
+                break;
+            },
+            else => {
+                log.err("Failed to handle request: {s}", .{@errorName(err)});
+                break;
+            },
+        };
     }
 }
 
@@ -108,9 +129,7 @@ fn handleRequest(self: *Server, req: *std.http.Server.Request) !void {
         .extra_headers = headers.items,
     };
 
-    req.respond(res_body, opts) catch |err| {
-        log.err("Failed to respond: {s}", .{@errorName(err)});
-    };
+    try req.respond(res_body, opts);
     // NOTE: for debug only
     log.info("{s} {s}{s} {d}", .{ std.enums.tagName(std.http.Method, req.head.method) orelse "", sanitized orelse "", query, status });
 }
@@ -145,7 +164,12 @@ fn serveFile(self: *Server, allocator: std.mem.Allocator, req: *std.http.Server.
 
     try headers.append(allocator, .{ .name = "Cache-Control", .value = "public, max-age=0, must-revalidate" });
 
-    const stat = try self.root_dir.statFile(self.io, normalized_path, .{});
+    const stat = self.root_dir.statFile(self.io, normalized_path, .{}) catch |err| return switch (err) {
+        error.FileNotFound => .{ .status = .not_found },
+        error.AccessDenied => .{ .status = .forbidden },
+        error.Canceled => return error.Canceled,
+        else => .{ .status = .internal_server_error },
+    };
     // TODO: replace with proper hash
     const etag_str = try std.fmt.allocPrint(allocator, "\"{d}-{d}\"", .{ stat.mtime.toNanoseconds(), stat.size });
     var not_modified = false;
@@ -173,12 +197,11 @@ fn serveFile(self: *Server, allocator: std.mem.Allocator, req: *std.http.Server.
             .headers = try headers.toOwnedSlice(allocator),
         };
     } else {
-        const file_buf = self.root_dir.readFileAlloc(self.io, normalized_path, allocator, Io.Limit.limited(10 * 1024)) catch |err| {
-            switch (err) {
-                error.FileNotFound => return .{ .status = .not_found },
-                error.AccessDenied => return .{ .status = .forbidden },
-                else => return .{ .status = .internal_server_error },
-            }
+        const file_buf = self.root_dir.readFileAlloc(self.io, normalized_path, allocator, Io.Limit.limited(10 * 1024)) catch |err| return switch (err) {
+            error.FileNotFound => .{ .status = .not_found },
+            error.AccessDenied => .{ .status = .forbidden },
+            error.Canceled => return error.Canceled,
+            else => .{ .status = .internal_server_error },
         };
 
         return .{
