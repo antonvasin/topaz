@@ -237,6 +237,8 @@ pub const Parser = struct {
             c.MD_SPAN_STRONG => try ctx.writeString("<strong>"),
             c.MD_SPAN_A => {
                 const a_detail = @as(*const c.MD_SPAN_A_DETAIL, @ptrCast(@alignCast(detail)));
+                // std.debug.print("enter_span ---------------- {s}\n", .{a_detail.href.text});
+                if (a_detail.href.size <= 0) return; // ignore empty links []()
                 const href = a_detail.href.text[0..a_detail.href.size];
                 var page_link = href;
                 if (mem.startsWith(u8, href, "/")) page_link = page_link[1..];
@@ -312,6 +314,7 @@ pub const Parser = struct {
             c.MD_SPAN_EM => try ctx.writeString("</em>"),
             c.MD_SPAN_STRONG => try ctx.writeString("</strong>"),
             c.MD_SPAN_A => {
+                // TODO: ignore closing tag for empty links, see enter_span_impl. Still works due to lexbor ignoring invalid HTML
                 try ctx.writeString("</a>");
                 if (ctx.cur_link_url) |link_url| {
                     const link_text = try ctx.cur_link_text.toOwnedSlice(ctx.allocator);

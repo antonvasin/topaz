@@ -156,15 +156,21 @@ pub const Page = struct {
             var yaml_parser: Yaml = .{ .source = yml };
             // Pages are not following any fixed schema so we won't try to parse them
             // into a struct. Instead we attempt to parse fields important to us one by one.
-            try yaml_parser.load(page_allocator);
-            defer yaml_parser.deinit(page_allocator);
-            const map = yaml_parser.docs.items[0].map;
-            if (map.contains("title")) {
-                page_allocator.free(meta.title);
-                meta.title = try page_allocator.dupe(u8, map.get("title").?.scalar);
+            // TODO: come up with the solution for wrongly formatted frontematter e.g. unquoted /, {{ }}
+            if (yaml_parser.load(page_allocator)) {
+                const map = yaml_parser.docs.items[0].map;
+                if (map.contains("title")) {
+                    page_allocator.free(meta.title);
+                    meta.title = try page_allocator.dupe(u8, map.get("title").?.scalar);
+                }
+                if (map.contains("draft")) meta.skip = mem.eql(u8, map.get("draft").?.scalar, "true");
+                if (map.contains("publish")) meta.skip = !mem.eql(u8, map.get("publish").?.scalar, "true");
+            } else |err| switch (err) {
+                error.ParseFailure => log.err("Frontmatter parsing failed for {s}: {s}", .{ name, yaml_parser.parse_errors.getCompileLogOutput() }),
+                else => return err,
             }
-            if (map.contains("draft")) meta.skip = mem.eql(u8, map.get("draft").?.scalar, "true");
-            if (map.contains("publish")) meta.skip = !mem.eql(u8, map.get("publish").?.scalar, "true");
+
+            defer yaml_parser.deinit(page_allocator);
         }
 
         return .{
@@ -172,7 +178,7 @@ pub const Page = struct {
             .path = file_path,
             .out_path = out_path,
             .buf = buf,
-            .markdown = buf[yaml_end .. buf.len - 1],
+            .markdown = buf[yaml_end..],
             .frontmatter = frontmatter,
             .meta = meta,
             .arena = arena,

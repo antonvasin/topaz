@@ -96,7 +96,9 @@ fn handleRequest(self: *Server, req: *std.http.Server.Request) !void {
     const target = req.head.target;
     const path, const query = if (std.mem.indexOfScalar(u8, target, '?')) |q| .{ target[0..q], target[q..] } else .{ target, "" };
 
-    const sanitized = try sanitizePath(allocator, path);
+    // TODO: url un-escape
+    const unescaped = try unescapeUrl(allocator, path);
+    const sanitized = try sanitizePath(allocator, unescaped);
 
     if (sanitized) |sanitized_path| {
         switch (req.head.method) {
@@ -168,7 +170,10 @@ fn serveFile(self: *Server, allocator: std.mem.Allocator, req: *std.http.Server.
         error.FileNotFound => .{ .status = .not_found },
         error.AccessDenied => .{ .status = .forbidden },
         error.Canceled => return error.Canceled,
-        else => .{ .status = .internal_server_error },
+        else => |e| {
+            log.err("Internal error: {s}", .{@errorName(e)});
+            return .{ .status = .internal_server_error };
+        },
     };
     // TODO: replace with proper hash
     const etag_str = try std.fmt.allocPrint(allocator, "\"{d}-{d}\"", .{ stat.mtime.toNanoseconds(), stat.size });
@@ -197,11 +202,15 @@ fn serveFile(self: *Server, allocator: std.mem.Allocator, req: *std.http.Server.
             .headers = try headers.toOwnedSlice(allocator),
         };
     } else {
-        const file_buf = self.root_dir.readFileAlloc(self.io, normalized_path, allocator, Io.Limit.limited(10 * 1024)) catch |err| return switch (err) {
+        // TODO: replace with File.Reader and avoid the limit
+        const file_buf = self.root_dir.readFileAlloc(self.io, normalized_path, allocator, Io.Limit.limited(1024 * 1024)) catch |err| return switch (err) {
             error.FileNotFound => .{ .status = .not_found },
             error.AccessDenied => .{ .status = .forbidden },
             error.Canceled => return error.Canceled,
-            else => .{ .status = .internal_server_error },
+            else => |e| {
+                log.err("Internal error: {s}", .{@errorName(e)});
+                return .{ .status = .internal_server_error };
+            },
         };
 
         return .{
@@ -231,6 +240,29 @@ fn sanitizePath(gpa: std.mem.Allocator, url_path: []const u8) !?[]const u8 {
     }
     if (parts.items.len == 0) is_empty = true; // serve index
     return if (is_empty) try std.fmt.allocPrint(gpa, "index.html", .{}) else try std.mem.join(gpa, "/", parts.items);
+}
+
+// Caller frees the memory
+pub fn unescapeUrl(gpa: std.mem.Allocator, input: []const u8) ![]const u8 {
+    var url: std.ArrayList(u8) = .empty;
+
+    var i: usize = 0;
+    while (i < input.len) {
+        if (input[i] == '%' and i + 2 < input.len) {
+            const bytes = input[i + 1 .. i + 3];
+            const byte_val = std.fmt.parseInt(u8, bytes, 16) catch { // FIXME: error handling as logic
+                try url.append(gpa, '%');
+                i += 1;
+                continue;
+            };
+            try url.append(gpa, byte_val);
+            i += 3;
+        } else {
+            try url.append(gpa, input[i]);
+            i += 1;
+        }
+    }
+    return url.toOwnedSlice(gpa);
 }
 
 test "static server" {
