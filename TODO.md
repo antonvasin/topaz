@@ -65,6 +65,7 @@
 - [ ] Generate RSS feed
 - [ ] Parse headers, generate Table of Contents
 - [ ] Hash/diff individual paragraphs
+- [ ] Fix single-file input, `processFile` fails with `NotDir`
 
 ### Metadata
 
@@ -75,4 +76,4 @@
 
 ### Chores
 
-- [ ] zig 0.16
+- [x] zig 0.16
