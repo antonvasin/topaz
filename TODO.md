@@ -66,6 +66,11 @@
 - [ ] Parse headers, generate Table of Contents
 - [ ] Hash/diff individual paragraphs
 - [ ] Fix single-file input, `processFile` fails with `NotDir`
+- [ ] Parallel indexing/rendering
+
+### Server
+
+- [ ] Stream long files from disc view reader interface
 
 ### Metadata
 
