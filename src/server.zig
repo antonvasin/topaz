@@ -132,8 +132,7 @@ fn handleRequest(self: *Server, req: *std.http.Server.Request) !void {
     };
 
     try req.respond(res_body, opts);
-    // NOTE: for debug only
-    log.info("{s} {s}{s} {d}", .{ std.enums.tagName(std.http.Method, req.head.method) orelse "", sanitized orelse "", query, status });
+    log.debug("{s} {s}{s} {d}", .{ std.enums.tagName(std.http.Method, req.head.method) orelse "", sanitized orelse "", query, status });
 }
 
 const MaxFileSize = 10 * 1024;
@@ -155,12 +154,13 @@ fn getRequestHeader(req: *const std.http.Server.Request, name: []const u8) ?std.
 
 /// Produces Response for static file request. Caller must free returned Response
 fn serveFile(self: *Server, allocator: std.mem.Allocator, req: *std.http.Server.Request, path: []const u8) !Response {
-    const normalized_path = if (std.mem.endsWith(u8, path, ".html")) try allocator.dupe(u8, path) else try std.fmt.allocPrint(allocator, "{s}.html", .{path});
-
     var headers: std.ArrayList(std.http.Header) = .empty;
 
-    const extension = normalized_path[std.mem.lastIndexOfScalar(u8, normalized_path, '.') orelse normalized_path.len - 1 ..];
-    const mime_type = mime.extension_map.get(extension) orelse mime.Type.@"text/plain";
+    var extension = if (std.mem.lastIndexOfScalar(u8, path, '.')) |ext_i| path[ext_i..] else null;
+    const normalized_path = if (extension) |_| try allocator.dupe(u8, path) else try std.fmt.allocPrint(allocator, "{s}.html", .{path});
+    if (extension == null) extension = ".html";
+
+    const mime_type = if (extension) |ext| mime.extension_map.get(ext) orelse mime.Type.@"text/plain" else mime.Type.@"text/plain";
     const mime_str = std.enums.tagName(mime.Type, mime_type) orelse unreachable;
     try headers.append(allocator, .{ .name = "Content-Type", .value = mime_str });
 

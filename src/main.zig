@@ -254,7 +254,8 @@ fn runRender(allocator: mem.Allocator, io: Io, db: *DB, r: RenderArgs) !void {
     }
 
     // Third pass: write to disk
-    try cwd.createDirPath(io, r.output_path);
+    const out_dir = try cwd.createDirPathOpen(io, r.output_path, .{});
+    defer out_dir.close(io);
 
     for (page_graph.page_list.items, 0..) |*page, i| {
         if (page.meta.skip) continue;
@@ -263,20 +264,37 @@ fn runRender(allocator: mem.Allocator, io: Io, db: *DB, r: RenderArgs) !void {
         try ctx.writeHtmlHead(page.meta.title);
         try ctx.writeContents(page.meta.title);
 
-        const dir_path = if (std.fs.path.dirname(page.out_path)) |dir|
-            try std.fs.path.join(allocator, &[_][]const u8{ r.output_path, dir })
-        else
-            r.output_path;
+        if (std.fs.path.dirname(page.out_path)) |dir| {
+            try out_dir.createDirPath(io, dir);
+        }
 
-        const out_path = try std.fs.path.join(allocator, &[_][]const u8{ r.output_path, page.out_path });
-        try cwd.createDirPath(io, dir_path);
-        const dest_file = try cwd.createFile(io, out_path, .{});
+        const dest_file = try out_dir.createFile(io, page.out_path, .{});
         defer dest_file.close(io);
         var file_buf: [1024]u8 = undefined;
         var file_writer = dest_file.writer(io, &file_buf);
         const writer = &file_writer.interface;
         try writer.writeAll(try ctx.serialize());
         try writer.flush();
+    }
+
+    // Static files are resolved relative to the input directory, or to the
+    // cwd for a single file input.
+    const input = try cwd.statFile(io, r.input, .{});
+    const input_dir = if (input.kind == .directory) try cwd.openDir(io, r.input, .{}) else cwd;
+    defer if (input.kind == .directory) input_dir.close(io);
+
+    var it = page_graph.static_paths.keyIterator();
+    while (it.next()) |path| {
+        const static_path = std.mem.trimStart(u8, path.*, "/");
+
+        input_dir.copyFile(static_path, out_dir, static_path, io, .{ .make_path = true }) catch |err| switch (err) {
+            error.FileNotFound => {
+                var in_buf: [1024]u8 = undefined;
+                const in = try input_dir.realPath(io, &in_buf);
+                log.warn("Not found {s} in {s}", .{ static_path, in_buf[0..in] });
+            },
+            else => return err,
+        };
     }
 }
 

@@ -274,7 +274,13 @@ pub const Parser = struct {
 
                 const img_detail = @as(*const c.MD_SPAN_IMG_DETAIL, @ptrCast(@alignCast(detail)));
                 try ctx.writeString("<img src=\"");
-                try ctx.renderUrlEscaped(img_detail.src.text[0..img_detail.src.size]);
+                const img_src = img_detail.src.text[0..img_detail.src.size];
+                try ctx.renderUrlEscaped(img_src);
+
+                // Collect internal embedded static files
+                if (!(std.mem.startsWith(u8, img_src, "https://") or std.mem.startsWith(u8, img_src, "http://"))) {
+                    try ctx.graph.static_paths.put(img_src, false);
+                }
 
                 if (img_detail.title.text != null and img_detail.title.size > 0) {
                     try ctx.writeString("\" title=\"");

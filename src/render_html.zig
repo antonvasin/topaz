@@ -61,16 +61,12 @@ pub const RenderContext = struct {
     template: ?Template = null,
 
     pub fn init(allocator: std.mem.Allocator, page_graph: *PageGraph) !RenderContext {
-        const buf = std.ArrayList(u8).empty;
-        const link_text = std.ArrayList(u8).empty;
-        const header_text = std.ArrayList(u8).empty;
-
         return .{
-            .buf = buf,
+            .buf = .empty,
             .allocator = allocator,
             .graph = page_graph,
-            .cur_link_text = link_text,
-            .cur_header_text = header_text,
+            .cur_link_text = .empty,
+            .cur_header_text = .empty,
         };
     }
 

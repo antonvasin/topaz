@@ -55,7 +55,9 @@ eiusmod. Aliqua reprehenderit commodo ex non excepteur duis sunt velit enim.
 Voluptate laboris sint cupidatat ullamco ut ea consectetur et est culpa et culpa
 duis.
 
-![./public/Sea_Otter_(Enhydra_lutris)_(25169790524)_crop.jpg]
+![[public/Sea_Otter_(Enhydra_lutris)_(25169790524)_crop.jpg]]
+
+![otter](/public/Sea_Otter_(Enhydra_lutris)_(25169790524)_crop.jpg)
 
 > Consectetur voluptate quae distinctio perspiciatis ipsa itaque Praesentium
 > iure inventore excepturi soluta aliquam. Quis perferendis dolorum vel neque

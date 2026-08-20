@@ -209,8 +209,9 @@ pub const PageGraph = struct {
     // Page headers by id
     headers: std.StringHashMap(Page.Header),
 
+    static_paths: std.StringHashMap(bool),
+
     pub fn init(allocator: mem.Allocator) !PageGraph {
-        const page_list = std.ArrayList(Page).empty;
         const pages = std.StringHashMap(usize).init(allocator);
         const forward = Links.init(allocator);
         const backward = Links.init(allocator);
@@ -219,12 +220,13 @@ pub const PageGraph = struct {
 
         return .{
             .allocator = allocator,
-            .page_list = page_list,
+            .page_list = .empty,
             .pages = pages,
             .forward = forward,
             .backward = backward,
             .header_lists = headers_lists,
             .headers = headers,
+            .static_paths = std.StringHashMap(bool).init(allocator),
         };
     }
 
@@ -235,6 +237,7 @@ pub const PageGraph = struct {
         self.backward.deinit();
         self.header_lists.deinit();
         self.headers.deinit();
+        self.static_paths.deinit();
     }
 
     pub fn addPage(self: *PageGraph, page: Page) !void {
