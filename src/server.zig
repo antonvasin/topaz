@@ -150,15 +150,6 @@ const Response = struct {
     body: ?[]const u8 = null,
 };
 
-/// Look up a request header by name (case-insensitive)
-fn getRequestHeader(req: *const std.http.Server.Request, name: []const u8) ?std.http.Header {
-    var it = req.iterateHeaders();
-    while (it.next()) |header| {
-        if (std.ascii.eqlIgnoreCase(header.name, name)) return header;
-    }
-    return null;
-}
-
 /// Produces Response for static file request. Caller must free returned Response
 fn serveFile(self: *Server, allocator: std.mem.Allocator, req: *std.http.Server.Request, path: []const u8) !Response {
     var headers: std.ArrayList(std.http.Header) = .empty;
@@ -212,8 +203,7 @@ fn serveFile(self: *Server, allocator: std.mem.Allocator, req: *std.http.Server.
             .headers = try headers.toOwnedSlice(allocator),
         };
     } else {
-        // TODO: replace with File.Reader and avoid the limit
-        const file_buf = self.root_dir.readFileAlloc(self.io, normalized_path, allocator, Io.Limit.limited(1024 * 1024)) catch |err| return switch (err) {
+        const file = self.root_dir.openFile(self.io, normalized_path, .{}) catch |err| return switch (err) {
             error.FileNotFound => .{ .status = .not_found },
             error.AccessDenied => .{ .status = .forbidden },
             error.Canceled => return error.Canceled,
@@ -222,6 +212,24 @@ fn serveFile(self: *Server, allocator: std.mem.Allocator, req: *std.http.Server.
                 return .{ .status = .internal_server_error };
             },
         };
+
+        defer file.close(self.io);
+
+        // var file_buf: [1024]u8 = undefined;
+        var file_buf = try allocator.alloc(u8, 2048);
+        var fr = file.reader(self.io, file_buf);
+        const reader = fr.interface;
+
+        // TODO: replace with File.Reader and avoid the limit
+        // const file_buf = self.root_dir.readFileAlloc(self.io, normalized_path, allocator, Io.Limit.limited(1024 * 1024)) catch |err| return switch (err) {
+        //     error.FileNotFound => .{ .status = .not_found },
+        //     error.AccessDenied => .{ .status = .forbidden },
+        //     error.Canceled => return error.Canceled,
+        //     else => |e| {
+        //         log.err("Internal error: {s}", .{@errorName(e)});
+        //         return .{ .status = .internal_server_error };
+        //     },
+        // };
 
         return .{
             .status = .ok,
