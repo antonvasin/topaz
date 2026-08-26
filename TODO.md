@@ -29,10 +29,14 @@
 
 - [x] Index text content into sqlite DB
 - [x] Basic FTS5 search and querying via CLI
-- [ ] Check for modified files, fetch from DB if not modified
+- [x] Check for modified files, fetch from DB if not modified
+- [x] Copy linked images/files to output directory
+- [x] Stream long files from disc view reader interface
+- [x] zig 0.16
 
 ### 0.0.4
 
+- [ ] Basic `/search` endpoint for UI
 - [ ] Setup sqlite-vec extension
 - [ ] Generate embeddings during parsing
 - [ ] Basic semantic search
@@ -49,11 +53,11 @@
 - [ ] Templates: support backlinks
 - [ ] Templates: table of contents
 - [ ] Bundle JS & CSS (get dep graph, dedupe, bundle with esbuild)
-- [ ] Copy linked images/files to `/public`
 - [ ] Enhanced client-side navigation, prefetching
 - [ ] Web Components/frameworks support
 - [ ] Render formulas with [KaTeX](https://github.com/KaTeX/KaTeX)
 - [ ] Write basic tests for md-html conversion
+- [ ] Generate Table of Contents
 - [ ] Embeds
 
 ### Sources/Indexing
@@ -63,14 +67,13 @@
 - [ ] Generate chronological Archive/All posts info
 - [ ] Pin current pages version
 - [ ] Generate RSS feed
-- [ ] Parse headers, generate Table of Contents
 - [ ] Hash/diff individual paragraphs
 - [ ] Fix single-file input, `processFile` fails with `NotDir`
 - [ ] Parallel indexing/rendering
 
 ### Server
 
-- [ ] Stream long files from disc view reader interface
+- [ ] Support for `Range` header
 
 ### Metadata
 
@@ -81,4 +84,3 @@
 
 ### Chores
 
-- [x] zig 0.16
