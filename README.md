@@ -3,7 +3,7 @@
 Create static website from a folder of Markdown files. Supports Obsidian notes and GitHub Flavoured Markdown.
 
 ```
-topaz 0.0.2
+topaz 0.0.3
 
 Usage: topaz [--debug] <command> [args]
 
