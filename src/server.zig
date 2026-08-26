@@ -118,8 +118,30 @@ fn handleRequest(self: *Server, req: *std.http.Server.Request) !void {
                 } else {
                     const response = try self.serveFile(allocator, req, sanitized_path);
                     status = response.status;
-                    res_body = if (status == .not_modified) "" else response.body orelse std.http.Status.phrase(status) orelse "";
                     if (response.headers) |h| try headers.appendSlice(allocator, h);
+
+                    switch (response.body) {
+                        .none => {},
+                        .bytes => |b| res_body = b,
+                        .file => |f| {
+                            defer f.handler.close(self.io);
+                            var file_buf: [64 * 1024]u8 = undefined;
+                            var file_reader = f.handler.reader(self.io, &file_buf);
+                            var body_buf: [4096]u8 = undefined;
+                            var body_writer = try req.respondStreaming(&body_buf, .{
+                                .content_length = f.size,
+                                .respond_options = .{
+                                    .status = response.status,
+                                    .extra_headers = headers.items,
+                                },
+                            });
+
+                            // NOTE: using this instead of sendFileAll to avoid error.Unimplemented on sendFile
+                            _ = try body_writer.writer.sendFileReadingAll(&file_reader, .unlimited);
+                            try body_writer.end();
+                            return;
+                        },
+                    }
                 }
             },
             else => {
@@ -147,7 +169,16 @@ fn handleRequest(self: *Server, req: *std.http.Server.Request) !void {
 const Response = struct {
     status: std.http.Status,
     headers: ?[]std.http.Header = null,
-    body: ?[]const u8 = null,
+    body: Body = .none,
+
+    pub const Body = union(enum) {
+        none,
+        bytes: []const u8,
+        file: struct {
+            handler: std.Io.File,
+            size: u64,
+        },
+    };
 };
 
 /// Produces Response for static file request. Caller must free returned Response
@@ -213,28 +244,10 @@ fn serveFile(self: *Server, allocator: std.mem.Allocator, req: *std.http.Server.
             },
         };
 
-        defer file.close(self.io);
-
-        // var file_buf: [1024]u8 = undefined;
-        var file_buf = try allocator.alloc(u8, 2048);
-        var fr = file.reader(self.io, file_buf);
-        const reader = fr.interface;
-
-        // TODO: replace with File.Reader and avoid the limit
-        // const file_buf = self.root_dir.readFileAlloc(self.io, normalized_path, allocator, Io.Limit.limited(1024 * 1024)) catch |err| return switch (err) {
-        //     error.FileNotFound => .{ .status = .not_found },
-        //     error.AccessDenied => .{ .status = .forbidden },
-        //     error.Canceled => return error.Canceled,
-        //     else => |e| {
-        //         log.err("Internal error: {s}", .{@errorName(e)});
-        //         return .{ .status = .internal_server_error };
-        //     },
-        // };
-
         return .{
             .status = .ok,
             .headers = try headers.toOwnedSlice(allocator),
-            .body = file_buf,
+            .body = .{ .file = .{ .handler = file, .size = stat.size } },
         };
     }
 }
