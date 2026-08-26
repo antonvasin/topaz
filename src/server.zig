@@ -6,13 +6,22 @@ const testing = std.testing;
 const log = std.log.scoped(.server);
 const mime = @import("mime");
 
+pub const Headers = enum {
+    @"Content-Type",
+    @"Cache-Control",
+    @"If-None-Match",
+    @"If-Modified-Since",
+    @"Last-Modified",
+    Expires,
+    ETag,
+};
+
 root_dir: Io.Dir, // must be opened with .iterate = true
 allocator: std.mem.Allocator,
 io: Io,
 /// Present when server is listening on a port
 server: ?Io.net.Server,
 
-// TODO: use arena per request
 pub fn init(allocator: std.mem.Allocator, io: Io, root_dir: Io.Dir) Server {
     return .{
         .allocator = allocator,
@@ -135,8 +144,6 @@ fn handleRequest(self: *Server, req: *std.http.Server.Request) !void {
     log.debug("{s} {s}{s} {d}", .{ std.enums.tagName(std.http.Method, req.head.method) orelse "", sanitized orelse "", query, status });
 }
 
-const MaxFileSize = 10 * 1024;
-
 const Response = struct {
     status: std.http.Status,
     headers: ?[]std.http.Header = null,
@@ -162,9 +169,9 @@ fn serveFile(self: *Server, allocator: std.mem.Allocator, req: *std.http.Server.
 
     const mime_type = if (extension) |ext| mime.extension_map.get(ext) orelse mime.Type.@"text/plain" else mime.Type.@"text/plain";
     const mime_str = std.enums.tagName(mime.Type, mime_type) orelse unreachable;
-    try headers.append(allocator, .{ .name = "Content-Type", .value = mime_str });
+    try headers.append(allocator, .{ .name = @tagName(Headers.@"Content-Type"), .value = mime_str });
 
-    try headers.append(allocator, .{ .name = "Cache-Control", .value = "public, max-age=0, must-revalidate" });
+    try headers.append(allocator, .{ .name = @tagName(Headers.@"Cache-Control"), .value = "public, max-age=0, must-revalidate" });
 
     const stat = self.root_dir.statFile(self.io, normalized_path, .{}) catch |err| return switch (err) {
         error.FileNotFound => .{ .status = .not_found },
@@ -179,22 +186,25 @@ fn serveFile(self: *Server, allocator: std.mem.Allocator, req: *std.http.Server.
     const etag_str = try std.fmt.allocPrint(allocator, "\"{d}-{d}\"", .{ stat.mtime.toNanoseconds(), stat.size });
     var not_modified = false;
     // RFC 7232: If-None-Match takes precedence over If-Modified-Since
-    if (getRequestHeader(req, "If-None-Match")) |inm| {
-        not_modified = std.mem.eql(u8, inm.value, etag_str);
-    } else if (getRequestHeader(req, "If-Modified-Since")) |ims| {
-        if (fromRfc1123Date(ims.value)) |ims_ts| {
-            not_modified = ims_ts.toSeconds() >= stat.mtime.toSeconds();
+    var it = req.iterateHeaders();
+    while (it.next()) |header| {
+        if (std.ascii.eqlIgnoreCase(header.name, @tagName(Headers.@"If-None-Match"))) {
+            not_modified = std.mem.eql(u8, header.value, etag_str);
+        } else if (std.ascii.eqlIgnoreCase(header.name, @tagName(Headers.@"If-Modified-Since"))) {
+            if (fromRfc1123Date(header.value)) |ims_ts| {
+                not_modified = ims_ts.toSeconds() >= stat.mtime.toSeconds();
+            }
         }
     }
 
     const mtime_str = try toRfc1123Date(allocator, stat.mtime);
 
     if (mtime_str) |m| {
-        try headers.append(allocator, .{ .name = "Last-Modified", .value = m });
-        try headers.append(allocator, .{ .name = "Expires", .value = m });
+        try headers.append(allocator, .{ .name = @tagName(Headers.@"Last-Modified"), .value = m });
+        try headers.append(allocator, .{ .name = @tagName(Headers.Expires), .value = m });
     }
 
-    try headers.append(allocator, .{ .name = "ETag", .value = etag_str });
+    try headers.append(allocator, .{ .name = @tagName(Headers.ETag), .value = etag_str });
 
     if (not_modified) {
         return .{
